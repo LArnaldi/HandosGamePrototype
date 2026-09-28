@@ -2,7 +2,7 @@
 // Screens: home, lobby (host waiting), joining (guest), game (includes end-of-match view),
 // disconnected. All DOM is built with textContent; opponent data is never parsed as HTML.
 
-import { Match, MOVES, EMOJI, LABEL, MAX_HP } from "./game.js";
+import { Match, MOVES, EMOJI, LABEL, MAX_HP, DAMAGE, DRAW_DAMAGE } from "./game.js";
 import { hostRoom, joinRoom, buildInviteLink, readRoomFromUrl, normalizeCode } from "./net.js";
 
 const NAME_KEY = "handos-name";
@@ -28,6 +28,13 @@ let session = 0; // bumps on every new/closed session so stale callbacks are ign
 let queue = Promise.resolve();
 let animatedResult = null; // lastResult object whose reveal animation already played
 let animatedEnd = null; // match end (keyed by final result) whose animation already played
+let hpAnim = null; // {result, start}: damage animation of the last resolved round (plays once)
+
+// Damage feedback timings (ms). Re-renders during the window resume the animations at the
+// elapsed time instead of restarting them; after it, bars render statically.
+const HP_FILL_MS = 600;
+const HP_SHAKE_MS = 420;
+const HP_FLOAT_MS = 1100;
 
 // ---------- helpers ----------
 
@@ -121,6 +128,7 @@ function startGame() {
   state.match = new Match();
   state.oppName = DEFAULT_OPP;
   animatedResult = null;
+  hpAnim = null;
   state.screen = "game";
   send({ t: "hello", name: state.name });
   render();
@@ -346,19 +354,72 @@ function cancelBtn() {
   return h("button", { class: "btn btn-secondary", type: "button", text: "Annulla", onclick: () => goHome() });
 }
 
-function scoreboard(m) {
-  return h("div", { class: "scoreboard" },
-    h("span", { class: "score-name", text: "Tu" }),
-    h("span", { class: "score-num", text: `${m.hp.me} – ${m.hp.opp} HP` }),
-    h("span", { class: "score-name opp", text: state.oppName }));
+function reducedMotion() {
+  try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; }
+}
+
+// Start a Web Animation already `elapsed` ms in, so a re-render continues it rather than replaying.
+function playFrom(el, keyframes, duration, elapsed, easing = "ease-out") {
+  if (!(elapsed < duration) || typeof el.animate !== "function") return;
+  const a = el.animate(keyframes, { duration, easing, fill: "forwards" });
+  a.currentTime = Math.max(0, elapsed);
+}
+
+const SHAKE = [
+  { transform: "translateX(0)" }, { transform: "translateX(-6px)" }, { transform: "translateX(5px)" },
+  { transform: "translateX(-4px)" }, { transform: "translateX(2px)" }, { transform: "translateX(0)" },
+];
+
+function hpBar(side, label, nameParts, hp, dmg, elapsed) {
+  const pct = (hp / MAX_HP) * 100;
+  const level = pct > 50 ? "high" : pct > 25 ? "mid" : "low";
+  const fill = h("div", { class: `hp-fill ${level}` });
+  fill.style.width = `${pct}%`;
+  const num = h("span", { class: "hp-num", text: `HP ${hp}/${MAX_HP}` });
+  const track = h("div", {
+    class: "hp-track",
+    role: "meter",
+    "aria-valuemin": "0",
+    "aria-valuemax": String(MAX_HP),
+    "aria-valuenow": String(hp),
+    "aria-label": label,
+  }, fill);
+  const bar = h("div", { class: `hp hp-${side}` },
+    h("div", { class: "hp-head" }, h("span", { class: "hp-name" }, ...nameParts), num),
+    track);
+  if (dmg > 0 && elapsed < HP_FLOAT_MS) {
+    const from = Math.min(100, ((hp + dmg) / MAX_HP) * 100);
+    playFrom(fill, [{ width: `${from}%` }, { width: `${pct}%` }], HP_FILL_MS, elapsed);
+    playFrom(bar, SHAKE, HP_SHAKE_MS, elapsed, "linear");
+    const float = h("span", { class: "hp-float", text: `−${dmg}`, "aria-hidden": "true" });
+    num.append(float);
+    playFrom(float, [
+      { opacity: 0, transform: "translateY(0.4rem) scale(0.8)" },
+      { opacity: 1, transform: "translateY(-0.2rem) scale(1.15)", offset: 0.2 },
+      { opacity: 1, transform: "translateY(-0.5rem) scale(1)", offset: 0.65 },
+      { opacity: 0, transform: "translateY(-1.2rem) scale(1)" },
+    ], HP_FLOAT_MS, elapsed);
+  }
+  return bar;
+}
+
+function hpPanel(m) {
+  const r = m.lastResult;
+  if (r && hpAnim?.result !== r) {
+    hpAnim = { result: r, start: reducedMotion() ? -Infinity : performance.now() };
+  }
+  const elapsed = r ? performance.now() - hpAnim.start : Infinity;
+  return h("div", { class: "hp-panel" },
+    hpBar("me", "I tuoi HP", [h("span", { class: "hp-tag", text: "Tu" }), state.name], m.hp.me, r?.dmgMe ?? 0, elapsed),
+    hpBar("opp", `HP di ${state.oppName}`, [state.oppName], m.hp.opp, r?.dmgOpp ?? 0, elapsed));
 }
 
 function revealCard(r) {
   const fresh = r !== animatedResult;
   animatedResult = r;
-  const [text, cls] = r.outcome === 1 ? ["Hai vinto il round!", "win"]
-    : r.outcome === -1 ? ["Hai perso il round", "lose"]
-    : ["Pareggio", "draw"];
+  const [text, cls] = r.outcome === 1 ? [`Hai vinto il round! −${r.dmgOpp} HP all'avversario`, "win"]
+    : r.outcome === -1 ? [`Hai perso il round: −${r.dmgMe} HP`, "lose"]
+    : [`Pareggio: −${r.dmgMe} HP a testa`, "draw"];
   const side = (who, move) => h("div", { class: "reveal-side" },
     h("span", { class: "reveal-emoji", text: EMOJI[move], "aria-label": LABEL[move] }),
     h("span", { class: "reveal-who", text: who }));
@@ -381,7 +442,8 @@ function renderGame() {
       "aria-pressed": picked === mv ? "true" : "false",
       onclick: () => pickMove(mv),
     }, h("span", { class: "hand-emoji", text: EMOJI[mv], "aria-hidden": "true" }),
-       h("span", { class: "hand-label", text: LABEL[mv] }))));
+       h("span", { class: "hand-label", text: LABEL[mv] }),
+       h("span", { class: "hand-dmg", text: `${DAMAGE[mv]} ${DAMAGE[mv] === 1 ? "danno" : "danni"}` }))));
 
   let status;
   if (picked) status = m.oppHash ? `${state.oppName} ha scelto…` : `In attesa di ${state.oppName}…`;
@@ -389,11 +451,11 @@ function renderGame() {
   else status = "Scegli la tua mossa";
 
   return [
-    scoreboard(m),
-    h("p", { class: "round-info" },
-      h("strong", { text: `Round ${m.round}` }), " · ", `${MAX_HP} HP a testa`),
+    hpPanel(m),
+    h("p", { class: "round-info" }, h("strong", { text: `Round ${m.round}` })),
     !picked && m.lastResult ? revealCard(m.lastResult) : null,
     hands,
+    h("p", { class: "rules", text: `Pareggio: −${DRAW_DAMAGE} HP a testa` }),
     h("p", { class: `status${picked ? " waiting" : ""}`, "aria-live": "polite", text: status }),
     h("button", { class: "btn btn-secondary btn-quiet", type: "button", text: "Esci", onclick: () => goHome() }),
   ];
@@ -414,7 +476,8 @@ function renderEnd() {
     h("section", { class: `card end ${won ? "win" : draw ? "draw" : "lose"}${freshEnd ? " pop" : ""}` },
       h("p", { class: "end-emoji", text: m.cheated ? "🚩" : won ? "🏆" : draw ? "🤝" : "😔", "aria-hidden": "true" }),
       h("h2", { class: "end-title", text: headline }),
-      h("p", { class: "end-score", text: `Tu ${m.hp.me} HP – ${m.hp.opp} HP ${state.oppName}` })),
+      h("p", { class: "end-score", text: `HP finali · Tu ${m.hp.me} – ${m.hp.opp} ${state.oppName}` })),
+    hpPanel(m),
     m.lastResult && !m.cheated ? revealCard(m.lastResult) : null,
     rematchInfo ? h("p", { class: "status", "aria-live": "polite", text: rematchInfo }) : null,
     h("button", {

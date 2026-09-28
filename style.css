@@ -9,6 +9,8 @@
   --accent-fg: #ffffff;
   --danger: #c92a2a;
   --success: #2b8a3e;
+  --warning: #e8a200;
+  --track: #e7e5df;
   --shadow: 0 2px 10px rgb(0 0 0 / 0.08);
 }
 
@@ -23,6 +25,8 @@
     --accent-fg: #0b0b0d;
     --danger: #ff6b6b;
     --success: #69db7c;
+    --warning: #ffd43b;
+    --track: #2c2c33;
     --shadow: 0 2px 12px rgb(0 0 0 / 0.4);
   }
 }
@@ -118,17 +122,70 @@ input {
 .link-input { font-size: 0.85rem; color: var(--muted); }
 
 /* Game */
-.scoreboard {
+.hp-panel {
   width: 100%;
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  align-items: center;
-  gap: 0.75rem;
-  font-weight: 700;
+  gap: 0.6rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  text-align: left;
 }
-.score-name { text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.score-name.opp { text-align: left; }
-.score-num { font-size: 2rem; font-variant-numeric: tabular-nums; }
+.hp-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+.hp-name {
+  min-width: 0;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hp-tag {
+  display: inline-block;
+  margin-right: 0.4rem;
+  padding: 0 0.4rem;
+  border-radius: 0.4rem;
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-size: 0.75rem;
+  font-weight: 700;
+  vertical-align: 0.1em;
+}
+.hp-num { position: relative; flex: 0 0 auto; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--muted); font-size: 0.9rem; }
+.hp-track {
+  height: 0.9rem;
+  border-radius: 999px;
+  background: var(--track);
+  overflow: hidden;
+}
+.hp-fill {
+  height: 100%;
+  border-radius: inherit;
+  transition: background-color 0.4s ease;
+}
+.hp-fill.high { background: var(--success); }
+.hp-fill.mid { background: var(--warning); }
+.hp-fill.low { background: var(--danger); }
+.hp-float {
+  position: absolute;
+  right: 100%;
+  bottom: 0;
+  margin-right: 0.45rem;
+  opacity: 0;
+  pointer-events: none;
+  color: var(--danger);
+  font-weight: 800;
+  font-size: 1.15rem;
+  text-shadow: 0 1px 0 var(--surface), 0 0 4px var(--surface);
+  white-space: nowrap;
+}
 .round-info { margin: 0; color: var(--muted); }
 .round-info strong { color: var(--fg); }
 
@@ -164,17 +221,21 @@ input {
   transform: scale(1.05);
 }
 .hand-emoji { font-size: clamp(2.25rem, 11vw, 3rem); line-height: 1; }
-.hand-label { font-size: 0.9rem; font-weight: 600; }
+.hand-label { font-size: 0.9rem; font-weight: 600; line-height: 1.2; }
+.hand-dmg { font-size: 0.75rem; font-weight: 600; color: var(--danger); line-height: 1.2; }
+.hand-btn:disabled .hand-dmg { color: var(--muted); }
+.rules { margin: -0.25rem 0 0; color: var(--muted); font-size: 0.85rem; }
 
 .reveal { border-width: 2px; }
 .reveal.win { border-color: var(--success); }
 .reveal.lose { border-color: var(--danger); }
+.reveal.draw { border-color: var(--warning); }
 .reveal-row { display: flex; align-items: center; justify-content: space-around; gap: 0.5rem; }
 .reveal-side { display: flex; flex-direction: column; align-items: center; min-width: 0; flex: 1 1 0; }
 .reveal-emoji { font-size: 3rem; line-height: 1.1; }
 .reveal-who { color: var(--muted); font-size: 0.85rem; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .reveal-vs { color: var(--muted); font-weight: 700; }
-.reveal-outcome { margin: 0.5rem 0 0; font-weight: 800; font-size: 1.15rem; }
+.reveal-outcome { margin: 0.5rem 0 0; font-weight: 800; font-size: 1.05rem; }
 .reveal.win .reveal-outcome { color: var(--success); }
 .reveal.lose .reveal-outcome { color: var(--danger); }
 
@@ -182,6 +243,10 @@ input {
 .end-title { margin: 0.25rem 0; font-size: 1.6rem; }
 .end.win .end-title { color: var(--success); }
 .end.lose .end-title { color: var(--danger); }
+.end.draw .end-title { color: var(--accent); }
+.end.win { border: 2px solid var(--success); }
+.end.lose { border: 2px solid var(--danger); }
+.end.draw { border: 2px solid var(--warning); }
 .end-score { margin: 0; font-weight: 700; font-size: 1.1rem; overflow-wrap: anywhere; }
 h2 { margin: 0; }
 
