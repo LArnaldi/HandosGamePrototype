@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  MOVES, EMOJI, LABEL, WIN_SCORE, ROOM_ALPHABET, isMove, outcome,
+  MOVES, EMOJI, LABEL, MAX_HP, DAMAGE, DRAW_DAMAGE, ROOM_ALPHABET, isMove, outcome,
   makeSalt, makeRoomCode, commitHash, verifyReveal, Match,
 } from "../js/game.js";
 
@@ -13,7 +13,9 @@ test("constants and isMove", () => {
     assert.ok(LABEL[m]);
   }
   for (const x of ["pietra", "", null, undefined, 1, "toString", {}]) assert.equal(isMove(x), false);
-  assert.equal(WIN_SCORE, 3);
+  assert.equal(MAX_HP, 20);
+  assert.deepEqual(DAMAGE, { sasso: 5, carta: 3, forbice: 1 });
+  assert.equal(DRAW_DAMAGE, 1);
 });
 
 test("outcome for all 9 pairs", () => {
@@ -67,27 +69,99 @@ async function playRound(a, b, moveA, moveB, order = "ab") {
   }
 }
 
-test("full match, first to 3, both reveal orderings", async () => {
+test("damage for all 9 pairs, mirrored on both sides", async () => {
+  // [dmg to a, dmg to b]
+  const expected = {
+    "sasso,sasso": [1, 1], "sasso,carta": [3, 0], "sasso,forbice": [0, 5],
+    "carta,sasso": [0, 3], "carta,carta": [1, 1], "carta,forbice": [1, 0],
+    "forbice,sasso": [5, 0], "forbice,carta": [0, 1], "forbice,forbice": [1, 1],
+  };
+  for (const ma of MOVES) for (const mb of MOVES) {
+    const a = new Match();
+    const b = new Match();
+    await playRound(a, b, ma, mb);
+    const [dA, dB] = expected[`${ma},${mb}`];
+    const label = `${ma} vs ${mb}`;
+    assert.deepEqual(a.hp, { me: MAX_HP - dA, opp: MAX_HP - dB }, label);
+    assert.deepEqual(b.hp, { me: MAX_HP - dB, opp: MAX_HP - dA }, label);
+    assert.deepEqual(a.lastResult, {
+      round: 1, me: ma, opp: mb, outcome: outcome(ma, mb),
+      dmgMe: dA, dmgOpp: dB, hpMe: MAX_HP - dA, hpOpp: MAX_HP - dB,
+    }, label);
+    assert.deepEqual(b.lastResult, {
+      round: 1, me: mb, opp: ma, outcome: outcome(mb, ma),
+      dmgMe: dB, dmgOpp: dA, hpMe: MAX_HP - dB, hpOpp: MAX_HP - dA,
+    }, label);
+    assert.equal(a.winner, null);
+  }
+});
+
+test("HP floors at 0 and the opponent at 0 loses", async () => {
   const a = new Match();
   const b = new Match();
-  await playRound(a, b, "sasso", "forbice", "ab"); // a wins
-  assert.deepEqual(a.scores, { me: 1, opp: 0 });
-  assert.deepEqual(b.scores, { me: 0, opp: 1 });
-  assert.deepEqual(a.lastResult, { round: 1, me: "sasso", opp: "forbice", outcome: 1 });
-  assert.deepEqual(b.lastResult, { round: 1, me: "forbice", opp: "sasso", outcome: -1 });
-  await playRound(a, b, "carta", "carta", "ba"); // draw
-  assert.equal(a.round, 3);
-  assert.deepEqual(a.scores, { me: 1, opp: 0 });
-  await playRound(a, b, "carta", "forbice", "ba"); // b wins
-  await playRound(a, b, "carta", "sasso", "ab");
-  assert.equal(a.winner, null);
-  await playRound(a, b, "forbice", "carta", "ba");
-  assert.deepEqual(a.scores, { me: 3, opp: 1 });
+  a.hp = { me: 20, opp: 2 };
+  b.hp = { me: 2, opp: 20 };
+  await playRound(a, b, "sasso", "forbice"); // 5 damage on 2 HP
+  assert.deepEqual(a.hp, { me: 20, opp: 0 });
+  assert.deepEqual(b.hp, { me: 0, opp: 20 });
+  assert.equal(a.lastResult.dmgOpp, 5);
+  assert.equal(a.lastResult.hpOpp, 0);
   assert.equal(a.winner, "me");
   assert.equal(b.winner, "opp");
-  assert.equal(a.history.length, 5);
-  assert.equal(a.cheated || b.cheated, false);
   assert.equal(await a.pick("sasso"), null, "no picks after match over");
+});
+
+test("draw at 1 HP each ends the match in a draw", async () => {
+  const a = new Match();
+  const b = new Match();
+  a.hp = { me: 1, opp: 1 };
+  b.hp = { me: 1, opp: 1 };
+  await playRound(a, b, "carta", "carta");
+  assert.deepEqual(a.hp, { me: 0, opp: 0 });
+  assert.equal(a.winner, "draw");
+  assert.equal(b.winner, "draw");
+  assert.deepEqual(a.requestRematch(), { t: "rematch" }, "rematch allowed after a draw");
+});
+
+test("draw with only one side at 1 HP: that side loses", async () => {
+  const a = new Match();
+  const b = new Match();
+  a.hp = { me: 1, opp: 4 };
+  b.hp = { me: 4, opp: 1 };
+  await playRound(a, b, "sasso", "sasso");
+  assert.deepEqual(a.hp, { me: 0, opp: 3 });
+  assert.equal(a.winner, "opp");
+  assert.equal(b.winner, "me");
+});
+
+test("full match to 0 HP, both reveal orderings, mirrored state", async () => {
+  const a = new Match();
+  const b = new Match();
+  await playRound(a, b, "sasso", "forbice", "ab"); // a wins: b -5
+  await playRound(a, b, "carta", "carta", "ba"); // draw: both -1
+  assert.equal(a.round, 3);
+  assert.deepEqual(a.hp, { me: 19, opp: 14 });
+  await playRound(a, b, "carta", "forbice", "ba"); // b wins: a -1
+  await playRound(a, b, "sasso", "carta", "ab"); // b wins: a -3
+  assert.deepEqual(a.hp, { me: 15, opp: 14 });
+  for (let i = 0; i < 2; i++) await playRound(a, b, "sasso", "forbice", i ? "ab" : "ba"); // b -10
+  assert.deepEqual(a.hp, { me: 15, opp: 4 });
+  assert.equal(a.winner, null);
+  await playRound(a, b, "carta", "sasso", "ba"); // b -3 -> 1
+  await playRound(a, b, "forbice", "carta", "ab"); // b -1 -> 0
+  assert.deepEqual(a.hp, { me: 15, opp: 0 });
+  assert.deepEqual(b.hp, { me: 0, opp: 15 });
+  assert.equal(a.winner, "me");
+  assert.equal(b.winner, "opp");
+  assert.equal(a.history.length, 8);
+  for (let i = 0; i < 8; i++) {
+    const x = a.history[i];
+    const y = b.history[i];
+    assert.equal(x.round, i + 1);
+    assert.deepEqual([x.me, x.opp, x.outcome, x.dmgMe, x.dmgOpp, x.hpMe, x.hpOpp],
+      [y.opp, y.me, -y.outcome || 0, y.dmgOpp, y.dmgMe, y.hpOpp, y.hpMe]);
+  }
+  assert.equal(a.cheated || b.cheated, false);
 });
 
 test("opponent reveal arriving before our own reveal is sent", async () => {
@@ -103,9 +177,9 @@ test("opponent reveal arriving before our own reveal is sent", async () => {
   assert.equal(a.round, 1);
   const ra = a.takeReveal(); // resolves locally
   assert.equal(a.round, 2);
-  assert.deepEqual(a.scores, { me: 0, opp: 1 });
+  assert.deepEqual(a.hp, { me: 17, opp: 20 });
   assert.deepEqual(await b.receiveReveal(ra), { resolved: true, cheated: false });
-  assert.deepEqual(b.scores, { me: 1, opp: 0 });
+  assert.deepEqual(b.hp, { me: 20, opp: 17 });
 });
 
 test("cheating opponent is detected", async () => {
@@ -145,7 +219,7 @@ test("rematch resets when both request it", async () => {
   const a = new Match();
   const b = new Match();
   assert.equal(a.requestRematch(), null, "no rematch mid-match");
-  for (let i = 0; i < 3; i++) await playRound(a, b, "carta", "sasso");
+  for (let i = 0; i < 7; i++) await playRound(a, b, "carta", "sasso"); // 7 x 3 = 21 >= 20
   assert.equal(a.winner, "me");
   const msg = a.requestRematch();
   assert.deepEqual(msg, { t: "rematch" });
@@ -157,7 +231,7 @@ test("rematch resets when both request it", async () => {
   assert.equal(a.receiveRematch(), true);
   for (const m of [a, b]) {
     assert.equal(m.round, 1);
-    assert.deepEqual(m.scores, { me: 0, opp: 0 });
+    assert.deepEqual(m.hp, { me: MAX_HP, opp: MAX_HP });
     assert.equal(m.history.length, 0);
     assert.equal(m.iWantRematch || m.oppWantsRematch, false);
   }

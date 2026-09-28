@@ -1,15 +1,19 @@
 // game.js: pure game logic (moves, round/match rules, room codes, commit-reveal hashing); no DOM, Node-testable.
 //
 // API
-//   MOVES, EMOJI, LABEL, WIN_SCORE, ROOM_ALPHABET
+//   MOVES, EMOJI, LABEL, ROOM_ALPHABET
+//   MAX_HP (20), DAMAGE {sasso:5, carta:3, forbice:1} (keyed by the WINNING move), DRAW_DAMAGE (1)
 //   isMove(x) -> bool;  outcome(a, b) -> 1 | -1 | 0  (a's point of view)
 //   makeSalt() -> 32-char hex;  makeRoomCode() -> 5 chars from ROOM_ALPHABET
 //   async commitHash(round, move, salt) -> hex SHA-256 of `${round}:${move}:${salt}`
 //   async verifyReveal(hash, round, move, salt) -> bool
 //
 //   class Match (one match, local player's view, network-agnostic):
-//     state: round, scores {me, opp}, winner (null|"me"|"opp"), cheated, lastResult
-//            ({round, me, opp, outcome}), history [lastResult...], iWantRematch, oppWantsRematch
+//     rules: both start at MAX_HP. The round loser loses DAMAGE[winning move] HP; on a draw both
+//            lose DRAW_DAMAGE. HP floors at 0; a player at 0 loses. Both at 0 together -> "draw".
+//     state: round, hp {me, opp}, winner (null|"me"|"opp"|"draw"), cheated, lastResult
+//            ({round, me, opp, outcome, dmgMe, dmgOpp, hpMe, hpOpp}; dmg* = HP lost this round,
+//            hp* = HP after it), history [lastResult...], iWantRematch, oppWantsRematch
 //     async pick(move)       -> {t:"commit", round, hash} | null (invalid / already picked / match over)
 //     receiveCommit(msg)     -> stores opponent hash (current round; next round is buffered)
 //     revealReady()          -> true when both commits known and our reveal not yet sent
@@ -24,7 +28,9 @@
 export const MOVES = ["sasso", "carta", "forbice"];
 export const EMOJI = { sasso: "✊", carta: "✋", forbice: "✌️" };
 export const LABEL = { sasso: "Sasso", carta: "Carta", forbice: "Forbice" };
-export const WIN_SCORE = 3;
+export const MAX_HP = 20;
+export const DAMAGE = { sasso: 5, carta: 3, forbice: 1 };
+export const DRAW_DAMAGE = 1;
 export const ROOM_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 
 const BEATS = { sasso: "forbice", forbice: "carta", carta: "sasso" };
@@ -67,7 +73,7 @@ export class Match {
 
   reset() {
     this.round = 1;
-    this.scores = { me: 0, opp: 0 };
+    this.hp = { me: MAX_HP, opp: MAX_HP };
     this.winner = null;
     this.cheated = false;
     this.lastResult = null;
@@ -136,12 +142,18 @@ export class Match {
 
   #resolve() {
     const res = outcome(this.myMove, this.oppMove);
-    if (res === 1) this.scores.me++;
-    else if (res === -1) this.scores.opp++;
-    this.lastResult = { round: this.round, me: this.myMove, opp: this.oppMove, outcome: res };
+    const dmgMe = res === 0 ? DRAW_DAMAGE : res === -1 ? DAMAGE[this.oppMove] : 0;
+    const dmgOpp = res === 0 ? DRAW_DAMAGE : res === 1 ? DAMAGE[this.myMove] : 0;
+    this.hp.me = Math.max(0, this.hp.me - dmgMe);
+    this.hp.opp = Math.max(0, this.hp.opp - dmgOpp);
+    this.lastResult = {
+      round: this.round, me: this.myMove, opp: this.oppMove, outcome: res,
+      dmgMe, dmgOpp, hpMe: this.hp.me, hpOpp: this.hp.opp,
+    };
     this.history.push(this.lastResult);
-    if (this.scores.me >= WIN_SCORE) this.winner = "me";
-    else if (this.scores.opp >= WIN_SCORE) this.winner = "opp";
+    if (this.hp.me === 0 && this.hp.opp === 0) this.winner = "draw";
+    else if (this.hp.opp === 0) this.winner = "me";
+    else if (this.hp.me === 0) this.winner = "opp";
     this.round++;
     this.#clearRound();
     this.oppHash = this.nextOppHash;

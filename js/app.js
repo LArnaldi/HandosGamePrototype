@@ -2,7 +2,7 @@
 // Screens: home, lobby (host waiting), joining (guest), game (includes end-of-match view),
 // disconnected. All DOM is built with textContent; opponent data is never parsed as HTML.
 
-import { Match, MOVES, EMOJI, LABEL, WIN_SCORE } from "./game.js";
+import { Match, MOVES, EMOJI, LABEL, MAX_HP } from "./game.js";
 import { hostRoom, joinRoom, buildInviteLink, readRoomFromUrl, normalizeCode } from "./net.js";
 
 const NAME_KEY = "handos-name";
@@ -349,7 +349,7 @@ function cancelBtn() {
 function scoreboard(m) {
   return h("div", { class: "scoreboard" },
     h("span", { class: "score-name", text: "Tu" }),
-    h("span", { class: "score-num", text: `${m.scores.me} – ${m.scores.opp}` }),
+    h("span", { class: "score-num", text: `${m.hp.me} – ${m.hp.opp} HP` }),
     h("span", { class: "score-name opp", text: state.oppName }));
 }
 
@@ -391,7 +391,7 @@ function renderGame() {
   return [
     scoreboard(m),
     h("p", { class: "round-info" },
-      h("strong", { text: `Round ${m.round}` }), " · ", `Primo a ${WIN_SCORE} vince`),
+      h("strong", { text: `Round ${m.round}` }), " · ", `${MAX_HP} HP a testa`),
     !picked && m.lastResult ? revealCard(m.lastResult) : null,
     hands,
     h("p", { class: `status${picked ? " waiting" : ""}`, "aria-live": "polite", text: status }),
@@ -402,18 +402,19 @@ function renderGame() {
 function renderEnd() {
   const m = state.match;
   const won = m.winner === "me";
+  const draw = m.winner === "draw";
   const endKey = m.lastResult ?? m;
   const freshEnd = endKey !== animatedEnd;
   animatedEnd = endKey;
-  const headline = m.cheated ? "L'avversario ha barato — vinci a tavolino" : won ? "Hai vinto!" : "Hai perso";
+  const headline = m.cheated ? "L'avversario ha barato — vinci a tavolino" : won ? "Hai vinto!" : draw ? "Pareggio!" : "Hai perso";
   let rematchInfo = null;
   if (m.iWantRematch) rematchInfo = `In attesa che ${state.oppName} accetti…`;
   else if (m.oppWantsRematch) rematchInfo = `${state.oppName} vuole la rivincita!`;
   return [
-    h("section", { class: `card end ${won ? "win" : "lose"}${freshEnd ? " pop" : ""}` },
-      h("p", { class: "end-emoji", text: m.cheated ? "🚩" : won ? "🏆" : "😔", "aria-hidden": "true" }),
+    h("section", { class: `card end ${won ? "win" : draw ? "draw" : "lose"}${freshEnd ? " pop" : ""}` },
+      h("p", { class: "end-emoji", text: m.cheated ? "🚩" : won ? "🏆" : draw ? "🤝" : "😔", "aria-hidden": "true" }),
       h("h2", { class: "end-title", text: headline }),
-      h("p", { class: "end-score", text: `Tu ${m.scores.me} – ${m.scores.opp} ${state.oppName}` })),
+      h("p", { class: "end-score", text: `Tu ${m.hp.me} HP – ${m.hp.opp} HP ${state.oppName}` })),
     m.lastResult && !m.cheated ? revealCard(m.lastResult) : null,
     rematchInfo ? h("p", { class: "status", "aria-live": "polite", text: rematchInfo }) : null,
     h("button", {

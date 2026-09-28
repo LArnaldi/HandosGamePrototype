@@ -6,7 +6,7 @@ A small static web game hosted on GitHub Pages. Players connect peer-to-peer thr
 
 - Files: `index.html`, `style.css`, `js/game.js` (pure logic, no DOM, importable in Node 24 for tests — use `globalThis.crypto`), `js/net.js` (PeerJS wrapper, uses global `Peer`), `js/app.js` (UI + glue), `tests/game.test.mjs` (`node --test`).
 - UI language Italian. Moves: "sasso" ✊, "carta" ✋, "forbice" ✌️. sasso beats forbice, forbice beats carta, carta beats sasso.
-- Match: first to 3 round wins. Draws don't count. After the match both can press "Rivincita"; a new match starts when both requested it.
+- Match: HP system. Each player starts with 20 HP. The round loser loses HP based on the winning move: sasso 5, carta 3, forbice 1. On a draw both lose 1 HP. HP floors at 0; a player at 0 HP loses. If both hit 0 in the same round the match is a draw. After the match both can press "Rivincita"; a new match starts when both requested it.
 - Room code: 5 chars from alphabet `ABCDEFGHJKMNPQRSTUVWXYZ23456789`. Host PeerJS id = `"handos-proto-" + code`. If PeerJS errors with type `'unavailable-id'`, regenerate code. Guest uses a random PeerJS id and connects to the host id. Invite link = `location.origin + location.pathname + "?r=" + code`. Opening a link with `?r=` auto-joins.
 - Only 2 players: host rejects any extra connection by sending `{t:"full"}` and closing it.
 - Protocol (JSON over PeerJS DataConnection, reliable): `{t:"hello", name}`, `{t:"commit", round, hash}`, `{t:"reveal", round, move, salt}`, `{t:"rematch"}`, `{t:"full"}`.
@@ -27,10 +27,10 @@ A small static web game hosted on GitHub Pages. Players connect peer-to-peer thr
 
 The header comment in `js/game.js` has the full details. Run the tests with `node --test` from the repo root. Node 24 does not accept a directory argument, so either pass no argument or use `node --test "tests/*.test.mjs"`.
 
-- Constants: `MOVES`, `EMOJI`, `LABEL`, `WIN_SCORE` (3), `ROOM_ALPHABET`.
+- Constants: `MOVES`, `EMOJI`, `LABEL`, `MAX_HP` (20), `DAMAGE` (`{sasso:5, carta:3, forbice:1}`, keyed by the winning move), `DRAW_DAMAGE` (1), `ROOM_ALPHABET`.
 - Functions: `isMove(x)`, `outcome(a, b)` (returns 1, -1 or 0), `makeSalt()`, `makeRoomCode()`, `async commitHash(round, move, salt)`, `async verifyReveal(hash, round, move, salt)`.
 - `new Match()`
-  - State fields: `round`, `scores {me, opp}`, `winner` (null, "me" or "opp"), `cheated`, `lastResult {round, me, opp, outcome}`, `history`, `iWantRematch`, `oppWantsRematch`.
+  - State fields: `round`, `hp {me, opp}`, `winner` (null, "me", "opp" or "draw"), `cheated`, `lastResult {round, me, opp, outcome, dmgMe, dmgOpp, hpMe, hpOpp}` (`dmg*` is HP lost that round, `hp*` is HP after it), `history`, `iWantRematch`, `oppWantsRematch`.
   - `async pick(move)` returns a `{t:"commit", round, hash}` message, or null when the pick isn't allowed.
   - `receiveCommit(msg)` stores the opponent's commit. A commit for round+1 that arrives early is buffered.
   - `revealReady()` and `takeReveal()`: after every `pick()` or `receiveCommit()`, check `if (m.revealReady()) send(m.takeReveal())`. `takeReveal()` resolves the round itself if the opponent's reveal already arrived, so re-render afterwards.
