@@ -22,3 +22,17 @@ A small static web game hosted on GitHub Pages. Players connect peer-to-peer thr
 3. **Networking**: `js/net.js` PeerJS wrapper (host/guest, room code retry, full-room rejection, message send/receive, disconnect events).
 4. **UI**: `js/app.js` and `style.css` (home, lobby/invite link, game screen, result/rematch, cheating and disconnect screens).
 5. **Polish and deploy**: end-to-end testing across two browsers, fixes, and GitHub Pages deployment.
+
+## API: `js/game.js`
+
+The header comment in `js/game.js` has the full details. Run the tests with `node --test` from the repo root. Node 24 does not accept a directory argument, so either pass no argument or use `node --test "tests/*.test.mjs"`.
+
+- Constants: `MOVES`, `EMOJI`, `LABEL`, `WIN_SCORE` (3), `ROOM_ALPHABET`.
+- Functions: `isMove(x)`, `outcome(a, b)` (returns 1, -1 or 0), `makeSalt()`, `makeRoomCode()`, `async commitHash(round, move, salt)`, `async verifyReveal(hash, round, move, salt)`.
+- `new Match()`
+  - State fields: `round`, `scores {me, opp}`, `winner` (null, "me" or "opp"), `cheated`, `lastResult {round, me, opp, outcome}`, `history`, `iWantRematch`, `oppWantsRematch`.
+  - `async pick(move)` returns a `{t:"commit", round, hash}` message, or null when the pick isn't allowed.
+  - `receiveCommit(msg)` stores the opponent's commit. A commit for round+1 that arrives early is buffered.
+  - `revealReady()` and `takeReveal()`: after every `pick()` or `receiveCommit()`, check `if (m.revealReady()) send(m.takeReveal())`. `takeReveal()` resolves the round itself if the opponent's reveal already arrived, so re-render afterwards.
+  - `async receiveReveal(msg)` returns `{resolved, cheated}`. If `cheated` is true, the match is over with `winner="me"`.
+  - `requestRematch()` returns `{t:"rematch"}`, or null. It works only after the match is over. `receiveRematch()` returns true when it causes a reset. A reset to a fresh match happens as soon as both players want a rematch.
