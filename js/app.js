@@ -1,8 +1,9 @@
 // app.js: UI rendering and glue between game logic (game.js) and networking (net.js).
-// Screens: home, lobby (host waiting), joining (guest), game (includes end-of-match view),
-// disconnected. All DOM is built with textContent; opponent data is never parsed as HTML.
+// Screens: home, lobby (host waiting), joining (guest), game (phases deck / roll / table / hand /
+// over, see Match in game.js), disconnected. All DOM is built with textContent; opponent data is never parsed as HTML.
 
 import { Match, MOVES, EMOJI, LABEL, MAX_HP, DAMAGE, DRAW_DAMAGE, ROUNDS_TO_WIN } from "./game.js";
+import { RINGS, RING_BY_ID, SLOTS, DECK_SIZE } from "./rings.js";
 import { hostRoom, joinRoom, buildInviteLink, readRoomFromUrl, normalizeCode } from "./net.js";
 
 const NAME_KEY = "handos-name";
@@ -21,6 +22,8 @@ const state = {
   oppName: DEFAULT_OPP,
   match: null,
   copied: false,
+  // Local, not yet confirmed choices of the current phase; reset when `key` changes.
+  sel: { key: "", deck: new Set(), table: new Set(), move: null, rings: [] },
 };
 
 let net = null; // current net handle
@@ -90,15 +93,6 @@ function send(msg) {
   if (msg) net?.send(msg);
 }
 
-// Match.pick() sets myHash when hashing finishes, possibly while earlier queued tasks are still
-// running; only reveal once our own commit for this hand has actually been sent, so a reveal
-// can never overtake our commit on the wire.
-let sentHash = null; // hash of the last commit sent (salted, so unique per pick)
-
-function maybeReveal(m) {
-  if (m.myHash && m.myHash === sentHash && m.revealReady()) send(m.takeReveal());
-}
-
 // ---------- session lifecycle ----------
 
 function endSession() {
@@ -124,8 +118,10 @@ function commitName() {
   saveName(state.name);
 }
 
-function startGame() {
-  state.match = new Match();
+function startGame(role) {
+  const s = session;
+  // Match sends its protocol messages itself, in order; drop them if this session is gone.
+  state.match = new Match({ role, send: (msg) => { if (s === session) net?.send(msg); } });
   state.oppName = DEFAULT_OPP;
   animatedResult = null;
   hpAnim = null;
@@ -162,7 +158,7 @@ function createRoom() {
       state.code = code;
       render();
     },
-    onOpponent: () => { if (s === session) startGame(); },
+    onOpponent: () => { if (s === session) startGame("host"); },
   });
   render();
 }
@@ -176,62 +172,60 @@ function join(code) {
   state.screen = "joining";
   net = joinRoom(state.code, {
     ...makeCallbacks(s),
-    onOpen: () => { if (s === session) startGame(); },
+    onOpen: () => { if (s === session) startGame("guest"); },
   });
   render();
 }
 
 // ---------- protocol ----------
 
-const isInt = (x) => Number.isInteger(x) && x > 0;
-
 function handleMessage(msg) {
   if (!msg || typeof msg !== "object" || typeof msg.t !== "string") return;
   enqueue(async () => {
     const m = state.match;
     if (!m) return;
-    switch (msg.t) {
-      case "hello":
-        state.oppName = cleanName(msg.name, DEFAULT_OPP);
-        break;
-      case "commit":
-        if (!isInt(msg.hand) || typeof msg.hash !== "string" || !/^[0-9a-f]{64}$/.test(msg.hash)) return;
-        m.receiveCommit({ t: "commit", hand: msg.hand, hash: msg.hash });
-        maybeReveal(m);
-        break;
-      case "reveal":
-        if (!isInt(msg.hand) || typeof msg.move !== "string" || typeof msg.salt !== "string") return;
-        await m.receiveReveal({ t: "reveal", hand: msg.hand, move: msg.move, salt: msg.salt });
-        break;
-      case "rematch":
-        m.receiveRematch();
-        break;
-      default:
-        break; // unknown type: ignore
-    }
+    if (msg.t === "hello") state.oppName = cleanName(msg.name, DEFAULT_OPP);
+    else await m.receive(msg); // Match validates every game message and ignores the rest
   });
 }
 
-function pickMove(move) {
+// Runs a Match action in the queue, then re-renders.
+function act(fn) {
   const m = state.match;
-  if (!m || m.myMove) return;
-  const pending = m.pick(move); // claims the move synchronously
-  render(); // show the choice immediately
-  enqueue(async () => {
-    const commit = await pending;
-    if (!commit || state.match !== m || m.myHash !== commit.hash) return; // stale pick
-    send(commit);
-    sentHash = commit.hash;
-    maybeReveal(m);
-  });
+  if (m) enqueue(() => (state.match === m ? fn(m) : undefined));
 }
 
-function rematch() {
-  const m = state.match;
-  if (!m) return;
-  const msg = m.requestRematch();
-  send(msg);
-  render();
+function confirmDeck() {
+  const ids = [...state.sel.deck];
+  if (ids.length === DECK_SIZE) act((m) => m.chooseDeck(ids));
+}
+
+function confirmTable() {
+  const ids = [...state.sel.table];
+  act((m) => (ids.length === m.d10 ? m.chooseTable(ids) : undefined));
+}
+
+function confirmHand() {
+  const { move, rings } = state.sel;
+  if (move) act((m) => m.pick(move, [...rings]));
+}
+
+function rematch(changeDeck) {
+  act((m) => m.requestRematch({ changeDeck }));
+}
+
+// Local selection state is keyed by phase/round/hand; a new key starts a fresh selection.
+function syncSelection(m) {
+  const key = `${m.phase}:${m.roundNo}:${m.hand}`;
+  if (state.sel.key === key) return state.sel;
+  state.sel = {
+    key,
+    deck: new Set(m.phase === "deck" ? m.prevDeck ?? [] : []),
+    table: new Set(),
+    move: null,
+    rings: [],
+  };
+  return state.sel;
 }
 
 // ---------- rendering ----------
@@ -241,7 +235,7 @@ function render() {
     home: renderHome,
     lobby: renderLobby,
     joining: renderJoining,
-    game: () => (state.match?.winner ? renderEnd() : renderGame()),
+    game: () => (state.match?.phase === "over" ? renderEnd() : renderGame()),
     disconnected: renderDisconnected,
   }[state.screen];
   root.replaceChildren(...[].concat(view()).filter(Boolean));
@@ -370,7 +364,7 @@ const SHAKE = [
   { transform: "translateX(-4px)" }, { transform: "translateX(2px)" }, { transform: "translateX(0)" },
 ];
 
-function hpBar(side, label, nameParts, hp, prevHp, dmg, elapsed) {
+function hpBar(side, label, nameParts, hp, prevHp, elapsed) {
   const pct = (hp / MAX_HP) * 100;
   const level = pct > 50 ? "high" : pct > 25 ? "mid" : "low";
   const fill = h("div", { class: `hp-fill ${level}` });
@@ -387,11 +381,12 @@ function hpBar(side, label, nameParts, hp, prevHp, dmg, elapsed) {
   const bar = h("div", { class: `hp hp-${side}` },
     h("div", { class: "hp-head" }, h("span", { class: "hp-name" }, ...nameParts), num),
     track);
-  if (dmg > 0 && elapsed < HP_FLOAT_MS) {
-    const from = (prevHp / MAX_HP) * 100; // HP before the hit (damage past 0 is not shown)
+  const delta = hp - prevHp; // net change this hand (damage and heal)
+  if (delta !== 0 && elapsed < HP_FLOAT_MS) {
+    const from = (prevHp / MAX_HP) * 100;
     playFrom(fill, [{ width: `${from}%` }, { width: `${pct}%` }], HP_FILL_MS, elapsed);
-    playFrom(bar, SHAKE, HP_SHAKE_MS, elapsed, "linear");
-    const float = h("span", { class: "hp-float", text: `−${dmg}`, "aria-hidden": "true" });
+    if (delta < 0) playFrom(bar, SHAKE, HP_SHAKE_MS, elapsed, "linear");
+    const float = h("span", { class: "hp-float", text: delta < 0 ? `−${-delta}` : `+${delta}`, "aria-hidden": "true" });
     num.append(float);
     playFrom(float, [
       { opacity: 0, transform: "translateY(0.4rem) scale(0.8)" },
@@ -409,18 +404,16 @@ function hpPanel(m) {
     hpAnim = { result: r, start: reducedMotion() ? -Infinity : performance.now() };
   }
   const elapsed = r ? performance.now() - hpAnim.start : Infinity;
-  let prev = m.history.at(-2); // lastResult is history.at(-1)
-  if (prev && prev.roundNo !== r.roundNo) prev = null; // first hand of a round starts from full HP
-  // Right after a KO, keep showing the pre-reset HP until the next hand is picked.
-  const showKo = r?.roundEnded && !m.myMove;
+  // Right after a KO, keep showing the pre-reset HP until the next round's hands start.
+  const showKo = !!r?.roundEnded && m.phase !== "hand";
+  const fresh = !!r && (showKo || (r.roundNo === m.roundNo && m.phase === "hand"));
   const hpMe = showKo ? r.hpMe : m.hp.me;
   const hpOpp = showKo ? r.hpOpp : m.hp.opp;
-  const fresh = showKo || r?.roundNo === m.roundNo;
   return h("div", { class: "hp-panel" },
     hpBar("me", "I tuoi HP", [h("span", { class: "hp-tag", text: "Tu" }), state.name],
-      hpMe, prev?.hpMe ?? MAX_HP, fresh ? r?.dmgMe ?? 0 : 0, elapsed),
+      hpMe, fresh ? r.hpBeforeMe : hpMe, elapsed),
     hpBar("opp", `HP di ${state.oppName}`, [state.oppName],
-      hpOpp, prev?.hpOpp ?? MAX_HP, fresh ? r?.dmgOpp ?? 0 : 0, elapsed));
+      hpOpp, fresh ? r.hpBeforeOpp : hpOpp, elapsed));
 }
 
 // Pop-in animation only the first time a given hand result is shown.
@@ -458,87 +451,201 @@ function scoreLine(m, cls = "") {
     h("span", { class: "score-name opp", text: state.oppName }));
 }
 
-function scoreboard(m, koResult) {
+const PHASE_TEXT = { deck: "Scelta degli anelli", roll: "Tiro del d10", table: "Anelli sul tavolo" };
+
+function scoreboard(m) {
+  const info = m.phase === "hand" ? `Round ${m.roundNo} · Mano ${m.handInRound}`
+    : m.phase === "over" ? `Round ${m.roundNo}` : `Round ${m.roundNo} · ${PHASE_TEXT[m.phase]}`;
   return h("section", { class: "scoreboard", "aria-label": "Punteggio della partita" },
     h("p", { class: "bo3", text: "Al meglio di 3" }),
     scoreLine(m),
     pips(m),
     isTied(m) ? h("p", { class: "tie-hint", text: "Parità: si continua!" }) : null,
-    h("p", { class: "round-info" }, h("strong", {
-      text: koResult ? `Fine del round ${koResult.roundNo}` : `Round ${m.roundNo} · Mano ${m.handInRound}`,
-    })));
+    h("p", { class: "round-info" }, h("strong", { text: info })));
 }
+
+const hpDelta = (before, after) => (after < before ? `−${before - after} HP` : after > before ? `+${after - before} HP` : "±0 HP");
 
 function handText(r) {
-  return r.outcome === 1 ? [`Hai vinto la mano! −${r.dmgOpp} HP all'avversario`, "win"]
-    : r.outcome === -1 ? [`Hai perso la mano: −${r.dmgMe} HP`, "lose"]
-    : [`Pareggio: −${r.dmgMe} HP a testa`, "draw"];
+  const cls = r.outcome === 1 ? "win" : r.outcome === -1 ? "lose" : "draw";
+  const head = r.outcome === 1 ? "Hai vinto la mano!" : r.outcome === -1 ? "Hai perso la mano." : "Pareggio.";
+  return [`${head} Tu ${hpDelta(r.hpBeforeMe, r.hpMe)} · ${state.oppName} ${hpDelta(r.hpBeforeOpp, r.hpOpp)}`, cls];
 }
 
+const ringLabel = (id) => `${RING_BY_ID[id]?.icon ?? "💍"} ${RING_BY_ID[id]?.name ?? id}`;
+
 function revealRow(r) {
-  const side = (who, move) => h("div", { class: "reveal-side" },
+  const side = (who, move, rings) => h("div", { class: "reveal-side" },
     h("span", { class: "reveal-emoji", text: EMOJI[move], "aria-label": LABEL[move] }),
-    h("span", { class: "reveal-who", text: who }));
+    h("span", { class: "reveal-who", text: who }),
+    h("span", { class: "muted", text: rings.length ? rings.map((id) => RING_BY_ID[id]?.icon ?? "💍").join(" ") : "nessun anello" }));
   return h("div", { class: "reveal-row" },
-    side("Tu", r.me),
+    side("Tu", r.me, r.ringsMe),
     h("span", { class: "reveal-vs", text: "vs" }),
-    side(state.oppName, r.opp));
+    side(state.oppName, r.opp, r.ringsOpp));
+}
+
+function ringLog(r) {
+  const who = (o) => (o === "me" ? "Tu" : state.oppName);
+  const items = [
+    h("li", { text: `Più veloce: ${who(r.first)} (i suoi anelli si applicano per primi)` }),
+    h("li", { text: `Danni base: Tu ${r.baseDmgMe} · ${state.oppName} ${r.baseDmgOpp}` }),
+    ...r.log.map((e) => h("li", { class: e.cancelled ? "ring-log-cancelled" : "" }, `${who(e.owner)}: ${ringLabel(e.id)} — ${e.note}`)),
+    h("li", { text: `Totale: Tu ${r.dmgMe} danni, +${r.healMe} HP · ${state.oppName} ${r.dmgOpp} danni, +${r.healOpp} HP` }),
+  ];
+  for (const id of r.stolenMe) items.push(h("li", { text: `${state.oppName} ti disattiva ${ringLabel(id)}` }));
+  for (const id of r.stolenOpp) items.push(h("li", { text: `Disattivi ${ringLabel(id)} a ${state.oppName}` }));
+  return h("ul", { class: "ring-log" }, items);
 }
 
 function revealCard(r) {
   const fresh = freshResult(r);
   const [text, cls] = handText(r);
+  let kicker = null;
+  if (r.roundEnded) {
+    kicker = r.roundWinner === "me" ? `KO! Round ${r.roundNo} vinto` : r.roundWinner === "opp" ? `KO… Round ${r.roundNo} perso`
+      : `Doppio KO! Round ${r.roundNo}: un punto a testa`;
+  }
   return h("section", { class: `card reveal ${cls}${fresh ? " pop" : ""}`, "aria-live": "polite" },
+    kicker ? h("h2", { class: "round-end-title", text: kicker }) : null,
     revealRow(r),
-    h("p", { class: "reveal-outcome", text }));
+    h("p", { class: "reveal-outcome", text }),
+    ringLog(r));
 }
 
-// Shown after a hand that ended a round (match still going), until the next move is picked.
-function roundEndCard(m, r) {
-  const fresh = freshResult(r);
-  const [title, cls] = r.roundWinner === "me" ? [`KO! Round ${r.roundNo} vinto`, "win"]
-    : r.roundWinner === "opp" ? [`KO… Round ${r.roundNo} perso`, "lose"]
-    : ["Doppio KO!", "draw"];
-  const [hand] = handText(r);
-  return h("section", { class: `card round-end ${cls}${fresh ? " pop" : ""}`, "aria-live": "polite" },
-    r.roundWinner === "both" ? h("p", { class: "round-end-kicker", text: `Fine del round ${r.roundNo}` }) : null,
-    h("h2", { class: "round-end-title" }, title,
-      r.roundWinner === "both" ? h("span", { class: "round-end-sub", text: " Un punto a testa" }) : null),
-    scoreLine(m, "score-small"),
-    h("p", { class: "round-end-hp", text: `HP finali: Tu ${r.hpMe} · ${state.oppName} ${r.hpOpp}` }),
-    h("div", { class: "round-end-hand" }, revealRow(r), h("p", { class: "reveal-outcome", text: hand })),
-    h("p", { class: "round-end-next" }, h("strong", { text: `Round ${m.roundNo}` }), `: si riparte da ${MAX_HP} HP`));
+// One ring as a chip (a button when clickable). opts: {used, selected, onclick, disabled, prefix}
+function ringChip(id, opts = {}) {
+  const ring = RING_BY_ID[id];
+  const cls = `ring-chip${opts.used ? " used" : ""}${opts.selected ? " selected" : ""}`;
+  const content = [opts.prefix ?? null, `${ring.icon} ${ring.name}`];
+  if (!opts.onclick) return h("span", { class: cls, title: ring.text }, ...content);
+  return h("button", { class: cls, type: "button", title: ring.text, disabled: !!opts.disabled, onclick: opts.onclick }, ...content);
+}
+
+function ringRow(label, ids, active) {
+  if (!ids) return null;
+  return h("div", { class: "ring-block" },
+    h("p", { class: "field-label", text: label }),
+    h("div", { class: "ring-row" }, ids.map((id) => ringChip(id, { used: active && !active.includes(id) }))));
+}
+
+// Checkbox list of rings; `sel` is a Set that is updated in place.
+function ringChecklist(ids, sel, max, disabled) {
+  return h("div", { class: "ring-list" }, ids.map((id) => {
+    const ring = RING_BY_ID[id];
+    const box = h("input", {
+      type: "checkbox",
+      checked: sel.has(id),
+      disabled: disabled || (!sel.has(id) && sel.size >= max),
+      onchange: (e) => {
+        if (e.target.checked) sel.add(id);
+        else sel.delete(id);
+        render();
+      },
+    });
+    return h("label", { class: `ring-opt${sel.has(id) ? " selected" : ""}` },
+      box,
+      h("span", { class: "ring-opt-name", text: `${ring.icon} ${ring.name}` }),
+      h("span", { class: "ring-opt-text", text: ring.text }));
+  }));
+}
+
+function waitText(m) {
+  return m.oppSubmitted ? `${state.oppName} ha già scelto` : `In attesa di ${state.oppName}…`;
+}
+
+function renderDeckPhase(m, sel) {
+  const done = m.submitted;
+  return h("section", { class: "card stack" },
+    h("h2", { text: `Scegli ${DECK_SIZE} anelli` }),
+    h("p", { class: "muted", text: `Il tuo mazzo per questa partita (${sel.deck.size}/${DECK_SIZE})` }),
+    ringChecklist(RINGS.map((r) => r.id), sel.deck, DECK_SIZE, done),
+    h("button", { class: "btn", type: "button", text: "Conferma", disabled: done || sel.deck.size !== DECK_SIZE, onclick: confirmDeck }),
+    h("p", { class: `status${done ? " waiting" : ""}`, text: done ? waitText(m) : m.oppSubmitted ? `${state.oppName} ha scelto` : "" }));
+}
+
+function renderTablePhase(m, sel) {
+  const done = m.submitted;
+  return [
+    h("section", { class: "card stack" },
+      h("p", { class: "d10", text: `🎲 d10: ${m.d10}` }),
+      h("h2", { text: `Metti ${m.d10} ${m.d10 === 1 ? "anello" : "anelli"} sul tavolo` }),
+      h("p", { class: "muted", text: `Scelti ${sel.table.size}/${m.d10}` }),
+      ringChecklist(m.deck.me, sel.table, m.d10, done),
+      h("button", { class: "btn", type: "button", text: "Conferma", disabled: done || sel.table.size !== m.d10, onclick: confirmTable }),
+      h("p", { class: `status${done ? " waiting" : ""}`, text: done ? waitText(m) : m.oppSubmitted ? `${state.oppName} ha scelto` : "" })),
+    ringRow(`Mazzo di ${state.oppName}`, m.deck.opp),
+  ];
+}
+
+function renderHandPhase(m, sel) {
+  const done = m.submitted;
+  const move = done ? m.myMove : sel.move;
+  const placed = done ? m.myRings : sel.rings;
+  const slots = move ? SLOTS[move] : 0;
+  const moves = h("div", { class: "hands" },
+    MOVES.map((mv) => h("button", {
+      class: `hand-btn${move === mv ? " chosen" : ""}`,
+      type: "button",
+      disabled: done,
+      "aria-pressed": move === mv ? "true" : "false",
+      onclick: () => {
+        sel.move = mv;
+        sel.rings = sel.rings.slice(0, SLOTS[mv]);
+        render();
+      },
+    }, h("span", { class: "hand-emoji", text: EMOJI[mv], "aria-hidden": "true" }),
+       h("span", { class: "hand-label", text: LABEL[mv] }),
+       h("span", { class: "hand-dmg", text: `${DAMAGE[mv]} ${DAMAGE[mv] === 1 ? "danno" : "danni"} · ${SLOTS[mv]} dita` }))));
+
+  const fingers = [];
+  for (let i = 0; i < slots; i++) {
+    const id = placed[i];
+    fingers.push(id
+      ? ringChip(id, { prefix: `${i + 1}. `, onclick: done ? null : () => { sel.rings.splice(i, 1); render(); } })
+      : h("span", { class: "ring-chip empty", text: `${i + 1}. —` }));
+  }
+  const mine = h("div", { class: "ring-block" },
+    h("p", { class: "field-label", text: "Il tuo tavolo (tocca per mettere un anello sul prossimo dito)" }),
+    h("div", { class: "ring-row" }, m.table.me.map((id) => {
+      const used = !m.active.me.includes(id);
+      const on = placed.includes(id);
+      return ringChip(id, {
+        used, selected: on,
+        disabled: done || used || on || !move || placed.length >= slots,
+        onclick: () => { sel.rings.push(id); render(); },
+      });
+    })));
+  return [
+    ringRow(`Tavolo di ${state.oppName}`, m.table.opp, m.active.opp),
+    moves,
+    move ? h("div", { class: "ring-block" },
+      h("p", { class: "field-label", text: slots ? `Dita (${placed.length}/${slots}, da sinistra a destra)` : "Sasso: nessun dito libero" }),
+      h("div", { class: "ring-row" }, fingers)) : null,
+    mine,
+    h("button", { class: "btn", type: "button", text: "Conferma", disabled: done || !move, onclick: confirmHand }),
+    h("p", { class: "rules", text: `Pareggio: −${DRAW_DAMAGE} HP a testa` }),
+    h("p", { class: `status${done ? " waiting" : ""}`, "aria-live": "polite",
+      text: done ? (m.oppSubmitted ? `${state.oppName} ha scelto…` : `In attesa di ${state.oppName}…`)
+        : m.oppSubmitted ? `${state.oppName} ha scelto` : "Scegli la mossa e gli anelli" }),
+  ];
 }
 
 function renderGame() {
   const m = state.match;
   animatedEnd = null; // a match is in progress, so the next end screen is a new one (even after a rematch)
-  const picked = m.myMove;
+  const sel = syncSelection(m);
   const r = m.lastResult;
-  const ko = r?.roundEnded && !picked ? r : null; // between rounds: round-end banner until a move is picked
-  const hands = h("div", { class: "hands" },
-    MOVES.map((mv) => h("button", {
-      class: `hand-btn${picked === mv ? " chosen" : ""}`,
-      type: "button",
-      disabled: !!picked,
-      "aria-pressed": picked === mv ? "true" : "false",
-      onclick: () => pickMove(mv),
-    }, h("span", { class: "hand-emoji", text: EMOJI[mv], "aria-hidden": "true" }),
-       h("span", { class: "hand-label", text: LABEL[mv] }),
-       h("span", { class: "hand-dmg", text: `${DAMAGE[mv]} ${DAMAGE[mv] === 1 ? "danno" : "danni"}` }))));
-
-  let status;
-  if (picked) status = m.oppHash ? `${state.oppName} ha scelto…` : `In attesa di ${state.oppName}…`;
-  else if (m.oppHash) status = `${state.oppName} ha scelto`;
-  else status = ko ? `Scegli la mossa per il round ${m.roundNo}` : "Scegli la tua mossa";
-
+  let body;
+  if (m.phase === "deck") body = renderDeckPhase(m, sel);
+  else if (m.phase === "roll") body = h("p", { class: "status waiting", text: "Tiro del d10 a due mani…" });
+  else if (m.phase === "table") body = renderTablePhase(m, sel);
+  else body = renderHandPhase(m, sel);
   return [
-    scoreboard(m, ko),
-    hpPanel(m),
-    ko ? roundEndCard(m, ko) : !picked && r ? revealCard(r) : null,
-    hands,
-    h("p", { class: "rules", text: `Pareggio: −${DRAW_DAMAGE} HP a testa` }),
-    h("p", { class: `status${picked ? " waiting" : ""}`, "aria-live": "polite", text: status }),
+    scoreboard(m),
+    m.phase === "deck" ? null : hpPanel(m),
+    r && m.phase !== "deck" ? revealCard(r) : null,
+    ...[].concat(body),
     h("button", { class: "btn btn-secondary btn-quiet", type: "button", text: "Esci", onclick: () => goHome() }),
   ];
 }
@@ -560,9 +667,10 @@ function renderEnd() {
   const freshEnd = endKey !== animatedEnd;
   animatedEnd = endKey;
   const headline = m.cheated ? "L'avversario ha barato — vinci a tavolino" : won ? "Hai vinto la partita!" : "Hai perso la partita";
+  const how = (change) => (change ? "cambiando anelli" : "con gli stessi anelli");
   let rematchInfo = null;
-  if (m.iWantRematch) rematchInfo = `In attesa che ${state.oppName} accetti…`;
-  else if (m.oppWantsRematch) rematchInfo = `${state.oppName} vuole la rivincita!`;
+  if (m.iWantRematch) rematchInfo = `Hai chiesto la rivincita ${how(m.rematchChangeDeck.me)}. In attesa di ${state.oppName}…`;
+  else if (m.oppWantsRematch) rematchInfo = `${state.oppName} vuole la rivincita ${how(m.rematchChangeDeck.opp)}!`;
   return [
     h("section", { class: `card end ${won ? "win" : "lose"}${freshEnd ? " pop" : ""}` },
       h("p", { class: "end-emoji", text: m.cheated ? "🚩" : won ? "🏆" : "😔", "aria-hidden": "true" }),
@@ -570,16 +678,11 @@ function renderEnd() {
       h("p", { class: "bo3", text: "Round vinti" }),
       scoreLine(m),
       roundsList(m)),
-    hpPanel(m),
+    m.lastResult ? hpPanel(m) : null,
     m.lastResult && !m.cheated ? revealCard(m.lastResult) : null,
     rematchInfo ? h("p", { class: "status", "aria-live": "polite", text: rematchInfo }) : null,
-    h("button", {
-      class: "btn",
-      type: "button",
-      disabled: m.iWantRematch,
-      text: m.oppWantsRematch ? "Accetta rivincita" : "Rivincita",
-      onclick: rematch,
-    }),
+    h("button", { class: "btn", type: "button", disabled: m.iWantRematch, text: "Rivincita con gli stessi anelli", onclick: () => rematch(false) }),
+    h("button", { class: "btn", type: "button", disabled: m.iWantRematch, text: "Rivincita cambiando anelli", onclick: () => rematch(true) }),
     h("button", { class: "btn btn-secondary", type: "button", text: "Esci", onclick: () => goHome() }),
   ];
 }

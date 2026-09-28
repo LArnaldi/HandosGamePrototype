@@ -387,3 +387,29 @@ h2 { margin: 0; }
   }
   .hand-btn:not(:disabled):hover, .hand-btn.chosen { transform: none; }
 }
+
+/* Rings (functional first pass; the full ring UI comes later) */
+.ring-block { width: 100%; display: flex; flex-direction: column; gap: 0.35rem; }
+.ring-row { display: flex; flex-wrap: wrap; gap: 0.35rem; justify-content: center; }
+.ring-chip {
+  display: inline-flex; align-items: center; gap: 0.25rem;
+  padding: 0.3rem 0.6rem; border: 1px solid var(--border); border-radius: 999px;
+  background: var(--surface); color: var(--fg); font: inherit; font-size: 0.85rem;
+}
+button.ring-chip { cursor: pointer; }
+button.ring-chip:disabled { cursor: default; }
+.ring-chip.selected { border-color: var(--accent); outline: 2px solid var(--accent); }
+.ring-chip.used { opacity: 0.4; text-decoration: line-through; }
+.ring-chip.empty { color: var(--muted); border-style: dashed; }
+.ring-list { display: flex; flex-direction: column; gap: 0.35rem; text-align: left; }
+.ring-opt {
+  display: grid; grid-template-columns: auto 1fr; column-gap: 0.5rem; align-items: start;
+  padding: 0.4rem 0.6rem; border: 1px solid var(--border); border-radius: 0.6rem; cursor: pointer;
+}
+.ring-opt.selected { border-color: var(--accent); }
+.ring-opt input { grid-row: span 2; margin-top: 0.3rem; }
+.ring-opt-name { font-weight: 700; font-size: 0.9rem; }
+.ring-opt-text { color: var(--muted); font-size: 0.8rem; }
+.ring-log { margin: 0.5rem 0 0; padding-left: 1.1rem; text-align: left; font-size: 0.85rem; color: var(--muted); }
+.ring-log-cancelled { text-decoration: line-through; }
+.d10 { margin: 0; font-size: 1.6rem; font-weight: 800; color: var(--accent); }

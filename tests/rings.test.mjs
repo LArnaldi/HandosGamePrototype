@@ -112,7 +112,7 @@ test("vampiro, guaritore and HP clamp", () => {
 test("fenice end check", () => {
   let r = hand("forbice", "sasso", ["fenice"], [], { hp: { me: 3, opp: 20 } });
   assert.equal(r.hpAfter.me, 1);
-  assert.equal(r.log[0].note, "resti a 1 PV");
+  assert.equal(r.log[0].note, "resti a 1 HP");
   r = hand("forbice", "sasso", ["fenice"], [], { hp: { me: 10, opp: 20 } });
   assert.equal(r.hpAfter.me, 5);
   // Fenice first on the fingers, damage added later by the opponent: still saves at the end.

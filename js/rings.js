@@ -40,11 +40,11 @@ export const RINGS = [
   { id: "specchio", name: "Anello dello Specchio", gem: "#9fe3f0", icon: "🪞",
     text: "Se perdi, l'avversario subisce metà (per difetto) dei tuoi danni." },
   { id: "vampiro", name: "Anello del Vampiro", gem: "#8b0000", icon: "🧛",
-    text: "Se vinci, recuperi 2 PV." },
+    text: "Se vinci, recuperi 2 HP." },
   { id: "guaritore", name: "Anello del Guaritore", gem: "#3cb371", icon: "🌿",
-    text: "Recuperi 3 PV, qualunque sia l'esito." },
+    text: "Recuperi 3 HP, qualunque sia l'esito." },
   { id: "fenice", name: "Anello della Fenice", gem: "#ff7f11", icon: "🔥",
-    text: "Se questa mano ti porterebbe a 0 PV, resti a 1." },
+    text: "Se questa mano ti porterebbe a 0 HP, resti a 1." },
   { id: "pace", name: "Anello della Pace", gem: "#f5f5f0", icon: "🕊️",
     text: "In caso di pareggio non subisci danni." },
   { id: "caos", name: "Anello del Caos", gem: "#9b30ff", icon: "🌀",
@@ -54,9 +54,9 @@ export const RINGS = [
   { id: "doppio-taglio", name: "Anello del Doppio Taglio", gem: "#dc143c", icon: "⚔️",
     text: "Se vinci, i danni all'avversario raddoppiano. Se perdi, i tuoi raddoppiano." },
   { id: "rabbia", name: "Anello della Rabbia", gem: "#ff4500", icon: "😡",
-    text: "Se vinci: +1 danno ogni 5 PV che ti mancano." },
+    text: "Se vinci: +1 danno ogni 5 HP che ti mancano." },
   { id: "tramonto", name: "Anello del Tramonto", gem: "#e9967a", icon: "🌅",
-    text: "Se vinci con 10 PV o meno: +4 danni." },
+    text: "Se vinci con 10 HP o meno: +4 danni." },
   { id: "sacrificio", name: "Anello del Sacrificio", gem: "#4b0000", icon: "🩸",
     text: "Subisci sempre 2 danni in più. Se vinci: +4 danni." },
   { id: "sorte", name: "Anello della Sorte", gem: "#50c878", icon: "🎲",
@@ -120,11 +120,11 @@ const EFFECTS = {
   vampiro(c) {
     if (c.res !== 1) return "";
     c.heal[c.self] += 2;
-    return "+2 PV";
+    return "+2 HP";
   },
   guaritore(c) {
     c.heal[c.self] += 3;
-    return "+3 PV";
+    return "+3 HP";
   },
   fenice() {
     return ""; // end check, see resolveHand
@@ -256,7 +256,7 @@ export function resolveHand({ moves, rings, first, hp, myActiveTable = [], oppAc
     if (v === 0 && !cancelled[side] && placed[side].includes("fenice")) {
       v = 1;
       const entry = log.find((e) => e.owner === side && e.id === "fenice");
-      entry.note = "resti a 1 PV";
+      entry.note = "resti a 1 HP";
     }
     hpAfter[side] = v;
   }

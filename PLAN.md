@@ -4,17 +4,17 @@ A small static web game hosted on GitHub Pages. Players connect peer-to-peer thr
 
 ## Shared spec
 
-- Files: `index.html`, `style.css`, `js/game.js` (pure logic, no DOM, importable in Node 24 for tests — use `globalThis.crypto`), `js/net.js` (PeerJS wrapper, uses global `Peer`), `js/app.js` (UI + glue), `tests/game.test.mjs` (`node --test`).
+- Files: `index.html`, `style.css`, `js/game.js` (pure logic, no DOM, importable in Node 24 for tests — use `globalThis.crypto`), `js/net.js` (PeerJS wrapper, uses global `Peer`), `js/rings.js` (ring database and effect engine), `js/app.js` (UI + glue), `tests/*.test.mjs` (`node --test`).
 - UI language Italian. Moves: "sasso" ✊, "carta" ✋, "forbice" ✌️. sasso beats forbice, forbice beats carta, carta beats sasso.
 - Structure: PARTITA (match) → ROUND → MANO (hand).
   - MANO: one RPS exchange (one commit-reveal). The hand loser loses HP based on the winning move: sasso 5, carta 3, forbice 1. On a draw both lose 1 HP. HP floors at 0.
   - ROUND: both start at 20 HP; hands are played until at least one player is at 0 HP. If exactly one is at 0, the other wins the round (+1 round point). If both reach 0 in the same hand, BOTH get +1 round point. HP then resets to 20 for the next round.
   - PARTITA: "al meglio di 3", extendable. The match is won by the player with at least 2 round points AND more round points than the opponent. If points are tied (2–2, 3–3, …) another round is played, indefinitely, until someone leads with ≥ 2. Examples: 1–0 then double KO → 2–1, match over; 1–1 then double KO → 2–2, continue; 2–2 then A wins → 3–2, A wins. There is no match draw.
-  - After the match both can press "Rivincita"; a new match (0–0, round 1, full HP) starts when both requested it.
+  - After the match each player picks "Rivincita con gli stessi anelli" or "Rivincita cambiando anelli"; a new match (0–0, round 1, full HP) starts when both requested it. If either wants to change, both go through the deck phase again (each player's previous deck is preselected); otherwise the decks are kept and the match starts at the round-1 d10.
 - Room code: 5 chars from alphabet `ABCDEFGHJKMNPQRSTUVWXYZ23456789`. Host PeerJS id = `"handos-proto-" + code`. If PeerJS errors with type `'unavailable-id'`, regenerate code. Guest uses a random PeerJS id and connects to the host id. Invite link = `location.origin + location.pathname + "?r=" + code`. Opening a link with `?r=` auto-joins.
 - Only 2 players: host rejects any extra connection by sending `{t:"full"}` and closing it.
-- Protocol (JSON over PeerJS DataConnection, reliable): `{t:"hello", name}`, `{t:"commit", hand, hash}`, `{t:"reveal", hand, move, salt}` (`hand` is a sequence number, 1-based and monotonic across the whole match, not reset per round), `{t:"rematch"}`, `{t:"full"}`.
-- Commit-reveal ("busta chiusa") so nobody can peek at the opponent's move: on picking a move, generate salt (16 random bytes, hex), hash = hex SHA-256 of `` `${hand}:${move}:${salt}` ``, send commit. Only after BOTH own and opponent commit for the hand are known, send reveal. On receiving opponent reveal, verify hash and that move is valid; on mismatch, the match ends flagged as cheating ("L'avversario ha barato"). Then resolve the hand.
+- Protocol (JSON over PeerJS DataConnection, reliable and ordered): see "Protocol" below. `{t:"hello", name}` and `{t:"full"}` are handled by `app.js`/`net.js`; every other message is handled by `Match`.
+- Commit-reveal ("busta chiusa") so nobody can peek at the opponent's choice: every secret choice (deck, d10 seed, table, move + rings) is first sent as a SHA-256 hash with a random 16-byte hex salt, and revealed only after BOTH commits for it are known. A reveal that does not match its commit, or that breaks the rules (wrong deck/table size, rings not owned, invalid placement), ends the match flagged as cheating ("L'avversario ha barato"), won by the honest player.
 - Disconnection: show "Avversario disconnesso" with a button back to home. No reconnection logic.
 - Player name: optional input on home, saved in localStorage (wrapped in try/catch), default "Giocatore".
 - No build step, no npm dependencies.
@@ -29,23 +29,47 @@ A small static web game hosted on GitHub Pages. Players connect peer-to-peer thr
 
 ## API: `js/game.js`
 
-The header comment in `js/game.js` has the full details. Run the tests with `node --test` from the repo root. Node 24 does not accept a directory argument, so either pass no argument or use `node --test "tests/*.test.mjs"`.
+The header comment in `js/game.js` has the full details. Run the tests with `node --test` from the repo root. Node 24 does not accept a directory argument, so either pass no argument or use `node --test "tests/*.test.mjs"`. `tests/game.test.mjs` covers the pure helpers, `tests/match.test.mjs` plays host + guest `Match` instances against each other through an in-memory bus (immediate, random-delay and manual delivery).
 
-- Constants: `MOVES`, `EMOJI`, `LABEL`, `MAX_HP` (20), `DAMAGE` (`{sasso:5, carta:3, forbice:1}`, keyed by the winning move), `DRAW_DAMAGE` (1), `ROUNDS_TO_WIN` (2), `ROOM_ALPHABET`.
-- Functions: `isMove(x)`, `outcome(a, b)` (returns 1, -1 or 0), `matchWinner({me, opp})` (from round points: "me", "opp" or null), `makeSalt()`, `makeRoomCode()`, `async commitHash(hand, move, salt)`, `async verifyReveal(hash, hand, move, salt)`.
-- `new Match()`
+- Constants: `MOVES`, `EMOJI`, `LABEL`, `MAX_HP` (20), `DAMAGE` (`{sasso:5, carta:3, forbice:1}`, keyed by the winning move), `DRAW_DAMAGE` (1), `ROUNDS_TO_WIN` (2), `ROOM_ALPHABET`, `PHASES`.
+- Functions: `isMove(x)`, `outcome(a, b)` (returns 1, -1 or 0), `matchWinner({me, opp})` (from round points: "me", "opp" or null), `makeSalt()`, `makeRoomCode()`, `isValidDeck(ids)`, `isValidTable(ids, size, deck)`.
+- Hashes (all async, hex SHA-256): `commitHash(hand, move, rings, salt)` of `` `${hand}:${move}:${rings.join(",")}:${salt}` ``, `verifyReveal(hash, hand, move, rings, salt)`, `deckHash(deck, salt)` of `` `deck:${sorted ids}:${salt}` ``, `tableHash(round, table, salt)` of `` `table:${round}:${sorted ids}:${salt}` ``, `seedHash(round, seed)` of `` `seed:${round}:${seed}` ``, `rollD10(round, seedHost, seedGuest)` = 1 + (first 4 bytes of SHA-256 of `` `${round}:${seedHost}:${seedGuest}` `` as a big-endian uint32, mod 10).
+- `new Match({role: "host" | "guest", send})`: one match from the local player's view. `send(msg)` is called for every outgoing protocol message, in order (without it, messages are pushed to `m.outbox`). All methods are async and queued internally, so they never interleave; `idle()` returns a promise for the end of the queue.
+  - Actions, each returning `true` when accepted:
+    - `chooseDeck(ids)`: phase "deck", exactly `DECK_SIZE` distinct ring ids.
+    - `chooseTable(ids)`: phase "table", exactly `d10` distinct ids from my deck.
+    - `pick(move, rings)`: phase "hand", rings in finger order (left to right), checked with `validatePlacement` against my active table.
+    - `receive(msg)`: any opponent message. Malformed, unknown or out-of-phase messages are ignored (returns false).
+    - `requestRematch({changeDeck})`: phase "over". Forced to `changeDeck: true` when a deck is missing (cheat detected in the deck phase).
   - State fields:
+    - `role`, `phase`: "deck" (choose decks) → "roll" (seed exchange, no user action) → "table" (choose table) → "hand" (play hands) → back to "roll" when a round ends, or "over". `submitted` / `oppSubmitted`: whether I / the opponent have committed a choice in the current phase.
+    - `deck {me, opp}` (sorted ids; `opp` is null until revealed), `prevDeck` (my deck of the previous match, for preselection), `d10` (null until rolled), `table {me, opp}`, `active {me, opp}` (table rings not used yet this round; a ring is "used" if it is on the table but not active).
+    - `myMove`, `myRings`: my committed choice for the current hand.
     - `hand`: protocol hand sequence number (1-based, monotonic across the whole match). `roundNo` and `handInRound`: display counters, both 1-based.
     - `points {me, opp}`: round points. `hp {me, opp}`: HP in the current round.
-    - `winner` (null, "me" or "opp"; never a draw), `cheated`, `iWantRematch`, `oppWantsRematch`.
-    - `lastResult`: the last resolved hand, `{hand, roundNo, handInRound, me, opp, outcome, dmgMe, dmgOpp, hpMe, hpOpp, roundEnded, roundWinner, pointsMe, pointsOpp, matchOver}`. `dmg*` is the damage dealt that hand, before HP is floored at 0. `hp*` is HP right after the hand, before any round reset, so a KO shows as 0. `roundWinner` is null, "me", "opp" or "both". `points*` are the round points after the hand.
+    - `winner` (null, "me" or "opp"; never a draw), `cheated`, `iWantRematch`, `oppWantsRematch`, `rematchChangeDeck {me, opp}` (null until requested).
+    - `lastResult`: the last resolved hand: `{hand, roundNo, handInRound, me, opp, outcome, first, ringsMe, ringsOpp, log, baseDmgMe, baseDmgOpp, dmgMe, dmgOpp, healMe, healOpp, hpBeforeMe, hpBeforeOpp, hpMe, hpOpp, stolenMe, stolenOpp, roundEnded, roundWinner, pointsMe, pointsOpp, matchOver}`. `first` is "me" or "opp" (the faster player). `log` comes from `resolveHand`. `baseDmg*` is the damage before rings, `dmg*` and `heal*` are the final pools, `hp*` is HP right after the hand, before any round reset (a KO shows as 0). `stolenMe` are my rings disabled by the opponent's Ladro. `roundWinner` is null, "me", "opp" or "both".
     - `history`: every hand's `lastResult`. `rounds`: finished rounds, `{roundNo, winner, hpMe, hpOpp}` with the final HP.
-    - When a hand ends a round and the match goes on, `hp` resets to 20, `roundNo` increments and `handInRound` goes back to 1 immediately. When the match is over, `roundNo` and `hp` stay as they ended.
-  - `async pick(move)` returns a `{t:"commit", hand, hash}` message, or null when the pick isn't allowed.
-  - `receiveCommit(msg)` stores the opponent's commit. A commit for hand+1 that arrives early is buffered (also across a round boundary).
-  - `revealReady()` and `takeReveal()`: after every `pick()` or `receiveCommit()`, check `if (m.revealReady()) send(m.takeReveal())`. `takeReveal()` resolves the hand itself if the opponent's reveal already arrived, so re-render afterwards.
-  - `async receiveReveal(msg)` returns `{resolved, cheated}`. If `cheated` is true, the match is over with `winner="me"`.
-  - `requestRematch()` returns `{t:"rematch"}`, or null. It works only after the match is over. `receiveRematch()` returns true when it causes a reset. A reset to a fresh match (0–0, round 1, hand 1, full HP) happens as soon as both players want a rematch.
+    - When a round ends and the match goes on, `hp` resets to 20, `roundNo` increments, `handInRound` goes back to 1, `d10`/`table`/`active` are cleared and the phase goes to "roll". When the match is over, everything stays as it ended.
+
+## Protocol
+
+`host` / `guest` is the canonical order for every shared random value, so both clients compute the same numbers. `round` and `hand` are 1-based; `hand` is monotonic across the whole match. Commits for the current or the next round/hand are held until needed; the first message for a given slot wins. Salts and seeds are 32-char hex, hashes 64-char hex.
+
+| Message | Sent when |
+|---|---|
+| `{t:"deck-commit", hash}` | The player confirms their deck (phase "deck"). Followed by `seed-commit` for round 1, unless it was already sent in `rematch`. |
+| `{t:"deck-reveal", deck, salt}` | Both deck commits are known. |
+| `{t:"seed-commit", round, hash}` | Round 1: with `deck-commit`. Round R+1: with `table-commit` of round R. |
+| `{t:"seed-reveal", round, seed}` | Both seed commits are known and the roll is due: round 1 right after `deck-reveal`, round R > 1 as soon as round R−1 ends. `d10 = rollD10(round, seedHost, seedGuest)`. |
+| `{t:"table-commit", round, hash}` | The player confirms their table (exactly `d10` rings of their deck). |
+| `{t:"table-reveal", round, table, salt}` | Both table commits are known. |
+| `{t:"commit", hand, hash}` | The player confirms move + rings. |
+| `{t:"order", hand, first}` | Host → guest only, `first` is "host" or "guest". The host is the arbiter of speed: when the host creates its own commit it records whether the guest's commit for that hand had already been received (first = "guest") or not (first = "host"). Sent as soon as both commits are known, before the host's reveal. |
+| `{t:"reveal", hand, move, rings, salt}` | Both commits are known; the host sends it right after `order`, the guest only after receiving `order` for that hand (so the host cannot choose the order after seeing the guest's move). |
+| `{t:"rematch", changeDeck, seed}` | Phase "over". `seed` is `seedHash(1, seed)` for round 1 of the next match. |
+
+Hand resolution: both clients call `resolveHand` from their own view, with `first` mapped to "me"/"opp" and ``rng = makeRng(SHA-256(`${hand}:${saltHost}:${saltGuest}`))``, and get mirrored results. Then HP = `hpAfter`, the rings placed by both players (cancelled ones included) and the rings disabled by Ladro are removed from the active tables, and the usual round/match rules apply.
 
 ## API: `js/net.js`
 
@@ -106,7 +130,7 @@ Design (fixed, decided by the user):
 
 ## API: `js/rings.js`
 
-Pure logic (no DOM, no network), importable in Node. `tests/rings.test.mjs` covers it. It imports `DAMAGE`, `DRAW_DAMAGE`, `MAX_HP` and `outcome` from `js/game.js`. It is not wired into `Match` or the UI yet.
+Pure logic (no DOM, no network), importable in Node. `tests/rings.test.mjs` covers it. It imports `DAMAGE`, `DRAW_DAMAGE`, `MAX_HP`, `outcome` and `isMove` from `js/game.js`, and `Match` in `js/game.js` imports it back (an ES module cycle that is safe because neither module uses the other's exports at load time).
 
 - Constants: `SLOTS`, `DECK_SIZE` (10), `RINGS` (20 × `{id, name, gem, icon, text}`: the id is a stable kebab slug, `gem` is a CSS color, `icon` is an emoji and `text` is short Italian rules text), `RING_BY_ID`.
 - `validatePlacement(move, ringIds, activeTable)` returns a bool. It checks that `ringIds.length ≤ SLOTS[move]`, that there are no duplicates, and that every id is a known ring in `activeTable`.
