@@ -289,8 +289,8 @@ function render() {
 
 function title() {
   return h("header", { class: "title" },
-    h("h1", { text: "Carta · Forbice · Sasso" }),
-    h("p", { class: "subtitle", text: "1v1 online con anelli" }));
+    h("h1", { text: "Handos" }),
+    h("p", { class: "subtitle", text: "Carta · Forbice · Sasso — 1v1 nella taverna" }));
 }
 
 function renderHome() {
