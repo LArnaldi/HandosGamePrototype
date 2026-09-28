@@ -83,6 +83,15 @@ function send(msg) {
   if (msg) net?.send(msg);
 }
 
+// Match.pick() sets myHash when hashing finishes, possibly while earlier queued tasks are still
+// running; only reveal once our own commit for this round has actually been sent, so a reveal
+// can never overtake our commit on the wire.
+let sentHash = null; // hash of the last commit sent (salted, so unique per pick)
+
+function maybeReveal(m) {
+  if (m.myHash && m.myHash === sentHash && m.revealReady()) send(m.takeReveal());
+}
+
 // ---------- session lifecycle ----------
 
 function endSession() {
@@ -180,7 +189,7 @@ function handleMessage(msg) {
       case "commit":
         if (!isInt(msg.round) || typeof msg.hash !== "string" || !/^[0-9a-f]{64}$/.test(msg.hash)) return;
         m.receiveCommit({ t: "commit", round: msg.round, hash: msg.hash });
-        if (m.revealReady()) send(m.takeReveal());
+        maybeReveal(m);
         break;
       case "reveal":
         if (!isInt(msg.round) || typeof msg.move !== "string" || typeof msg.salt !== "string") return;
@@ -202,9 +211,10 @@ function pickMove(move) {
   render(); // show the choice immediately
   enqueue(async () => {
     const commit = await pending;
-    if (!commit || state.match !== m) return;
+    if (!commit || state.match !== m || m.myHash !== commit.hash) return; // stale pick
     send(commit);
-    if (m.revealReady()) send(m.takeReveal());
+    sentHash = commit.hash;
+    maybeReveal(m);
   });
 }
 

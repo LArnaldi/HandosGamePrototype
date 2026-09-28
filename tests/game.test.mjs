@@ -164,3 +164,15 @@ test("rematch resets when both request it", async () => {
   await playRound(a, b, "sasso", "sasso");
   assert.equal(a.round, 2);
 });
+
+test("pick started before a reset cannot clobber a new pick of the same move", async () => {
+  const a = new Match();
+  const stale = a.pick("sasso");
+  a.reset();
+  const fresh = a.pick("sasso");
+  assert.equal(await stale, null);
+  const c = await fresh;
+  assert.ok(c);
+  assert.equal(a.myHash, c.hash);
+  assert.equal(await verifyReveal(a.myHash, 1, "sasso", a.mySalt), true);
+});

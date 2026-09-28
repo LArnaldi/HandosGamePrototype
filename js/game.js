@@ -88,9 +88,9 @@ export class Match {
     if (this.winner || !isMove(move) || this.myMove) return null;
     const round = this.round;
     this.myMove = move; // claim synchronously so concurrent picks are refused
-    this.mySalt = makeSalt();
-    const hash = await commitHash(round, move, this.mySalt);
-    if (this.round !== round || this.myMove !== move) return null; // reset meanwhile
+    const salt = (this.mySalt = makeSalt());
+    const hash = await commitHash(round, move, salt);
+    if (this.round !== round || this.mySalt !== salt) return null; // reset (and maybe re-picked) meanwhile
     this.myHash = hash;
     return { t: "commit", round, hash };
   }
