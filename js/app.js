@@ -280,12 +280,20 @@ function render() {
   // Keep keyboard focus on the "same" control across the full re-render.
   const active = document.activeElement;
   const focusKey = active && root.contains(active) ? active.dataset.k : null;
+  root.classList.toggle("wide", state.screen === "game");
   root.replaceChildren(...[].concat(view()).filter(Boolean));
   if (focusKey) {
     const el = [...root.querySelectorAll("[data-k]")].find((x) => x.dataset.k === focusKey);
     if (el && !el.disabled) el.focus({ preventScroll: true });
   }
+  refreshTip();
 }
+
+// Wide (landscape desktop) layout of the hand phase; re-render when crossing the breakpoint.
+let wideMq = null;
+try { wideMq = matchMedia("(min-width: 1000px)"); } catch {}
+const isWide = () => !!wideMq?.matches;
+wideMq?.addEventListener?.("change", () => render());
 
 function title() {
   return h("header", { class: "title" },
@@ -445,6 +453,11 @@ function hpBar(side, label, nameParts, hp, prevHp, elapsed) {
 
 // showKo: show the HP right after the last hand (before the round reset), e.g. 0 after a KO.
 function hpPanel(m, showKo = false) {
+  const bars = hpBars(m, showKo);
+  return h("div", { class: "hp-panel" }, bars.me, bars.opp);
+}
+
+function hpBars(m, showKo = false) {
   const r = m.lastResult;
   if (r && hpAnim?.result !== r) {
     hpAnim = { result: r, start: reducedMotion() ? -Infinity : performance.now() };
@@ -453,11 +466,12 @@ function hpPanel(m, showKo = false) {
   const fresh = !!r && (showKo || (r.roundNo === m.roundNo && m.phase === "hand"));
   const hpMe = showKo && r ? r.hpMe : m.hp.me;
   const hpOpp = showKo && r ? r.hpOpp : m.hp.opp;
-  return h("div", { class: "hp-panel" },
-    hpBar("me", "I tuoi HP", [h("span", { class: "hp-tag", text: "Tu" }), state.name],
+  return {
+    me: hpBar("me", "I tuoi HP", [h("span", { class: "hp-tag", text: "Tu" }), state.name],
       hpMe, fresh ? r.hpBeforeMe : hpMe, elapsed),
-    hpBar("opp", `HP di ${state.oppName}`, [state.oppName],
-      hpOpp, fresh ? r.hpBeforeOpp : hpOpp, elapsed));
+    opp: hpBar("opp", `HP di ${state.oppName}`, [state.oppName],
+      hpOpp, fresh ? r.hpBeforeOpp : hpOpp, elapsed),
+  };
 }
 
 // ---------- scoreboard ----------
@@ -510,7 +524,16 @@ function gemDot(ring) {
   return h("span", { class: "gem", "aria-hidden": "true", vars: { "--gem": ring.gem } });
 }
 
-// Deck builder / table picker card: gem, icon, full name, rules text; a toggle button.
+// The physical ring: a metal band lying on the table (the hole shows the wood and the icon),
+// with the gem mounted on top in its setting. Purely decorative.
+function ringArt(ring) {
+  return h("span", { class: "rt-ring", "aria-hidden": "true", vars: { "--gem": ring.gem } },
+    h("span", { class: "rt-band" }),
+    h("span", { class: "rt-icon", text: ring.icon }),
+    h("span", { class: "rt-gem" }));
+}
+
+// Deck builder / table picker card: the ring on a wooden coaster, full name, rules text; a toggle.
 function ringCard(id, { selected, disabled, onclick, key }) {
   const ring = RING_BY_ID[id];
   return h("button", {
@@ -522,38 +545,45 @@ function ringCard(id, { selected, disabled, onclick, key }) {
     vars: { "--gem": ring.gem },
     onclick,
   },
-    h("span", { class: "ring-card-head" },
-      gemDot(ring),
-      h("span", { class: "ring-icon", "aria-hidden": "true", text: ring.icon }),
-      h("span", { class: "ring-name", title: ring.name, text: shortName(id) }),
-      h("span", { class: "ring-check", "aria-hidden": "true", text: selected ? "✓" : "" })),
-    h("span", { class: "ring-text", text: ring.text }));
+    h("span", { class: "rc-plate" }, ringArt(ring)),
+    h("span", { class: "rc-body" },
+      h("span", { class: "ring-name", text: ring.name }),
+      h("span", { class: "ring-text", text: ring.text })),
+    h("span", { class: "ring-check", "aria-hidden": "true", text: selected ? "✓" : "" }));
 }
 
-// Table ring: compact chip with short name and text. status: active | placed | used | stolen.
-const STATUS_BADGE = { used: "usato", stolen: "rubato" };
-
-function ringMini(id, { status = "active", badge, onclick, disabled, key, label } = {}) {
+// Table ring: a physical ring lying on the wooden table, short name below.
+// status: active | placed | used | stolen. `lines`: state lines for the tooltip (and the label).
+// Interactive tokens use aria-disabled (not `disabled`) so hover and focus still show the tooltip.
+function ringToken(id, { status = "active", badge, onclick, disabled, key, lines = [] } = {}) {
   const ring = RING_BY_ID[id];
   const tag = onclick ? "button" : "div";
-  const badgeText = badge ?? STATUS_BADGE[status];
+  const label = [`${ring.name}: ${ring.text}`, ...lines].join(". ");
   return h(tag, {
-    class: `ring-mini is-${status}`,
+    class: `ring-token is-${status}`,
     type: onclick ? "button" : null,
-    disabled: onclick ? !!disabled : null,
+    "aria-disabled": onclick && disabled ? "true" : null,
+    tabindex: onclick ? null : "0",
+    role: onclick ? null : "img",
     "data-k": key,
+    "data-ring": id,
+    "data-tip": lines.join("\n"),
     "aria-label": label,
-    title: ring.text,
-    vars: { "--gem": ring.gem },
-    onclick,
+    onclick: onclick ? (e) => { if (!disabled) onclick(e); } : null,
   },
-    gemDot(ring),
-    h("span", { class: "ring-icon", "aria-hidden": "true", text: ring.icon }),
-    h("span", { class: "ring-body" },
-      h("span", { class: "ring-name", text: shortName(id) }),
-      h("span", { class: "ring-text", text: ring.text })),
-    badgeText ? h("span", { class: `ring-badge badge-${status}`, text: badgeText }) : null);
+    ringArt(ring),
+    h("span", { class: "rt-name", "aria-hidden": "true", text: shortName(id) }),
+    status === "stolen" ? h("span", { class: "rt-seal", "aria-hidden": "true", text: "Rubato" }) : null,
+    badge ? h("span", { class: "rt-badge", "aria-hidden": "true", text: badge }) : null);
 }
+
+const ringTable = (ids, keyPrefix) =>
+  h("div", { class: "ring-table" }, ids.map((id) => ringToken(id, { key: `${keyPrefix}-${id}` })));
+
+const STATE_LINE = {
+  used: "Usato in questo round",
+  stolen: "Rubato dal Ladro: spento fino al prossimo round",
+};
 
 // Rings disabled by a Ladro during the current round: {me: Set, opp: Set}.
 function stolenThisRound(m) {
@@ -578,7 +608,7 @@ function deckView(ids, label, uiKey) {
     ontoggle: (e) => { state.ui[uiKey] = e.target.open; },
   },
     h("summary", {}, `${label} (${ids.length})`),
-    h("div", { class: "ring-grid compact" }, ids.map((id) => ringMini(id))));
+    ringTable(ids, `dv-${uiKey}`));
 }
 
 // ---------- deck builder ----------
@@ -587,7 +617,7 @@ function renderDeckPhase(m, sel) {
   if (m.submitted) {
     return h("section", { class: "card stack phase-deck" },
       h("h2", { text: "Anelli scelti" }),
-      h("div", { class: "ring-grid compact" }, m.deck.me.map((id) => ringMini(id))),
+      ringTable(m.deck.me, "mydeck"),
       h("p", { class: "status waiting", "aria-live": "polite",
         text: m.oppSubmitted ? `${state.oppName} ha scelto: apertura delle buste…` : `In attesa che ${state.oppName} scelga i suoi anelli…` }));
   }
@@ -662,7 +692,7 @@ function renderTablePhase(m, sel) {
   if (m.submitted) {
     pick = h("section", { class: "card stack phase-table" },
       h("h2", { text: "Il tuo tavolo" }),
-      h("div", { class: "ring-grid compact" }, m.table.me.map((id) => ringMini(id))),
+      ringTable(m.table.me, "mytable"),
       h("p", { class: "status waiting", "aria-live": "polite",
         text: m.oppSubmitted ? `${state.oppName} ha scelto: apertura delle buste…` : `In attesa che ${state.oppName} scelga il suo tavolo…` }));
   } else {
@@ -704,17 +734,22 @@ function handVisual(move, placed, editable, sel) {
   const fingers = [];
   for (let i = 0; i < slots; i++) {
     const id = placed[i];
-    const label = id ? `Dito ${i + 1}: ${RING_BY_ID[id].name}${editable ? " (tocca per togliere)" : ""}` : `Dito ${i + 1}: libero`;
+    const ring = id ? RING_BY_ID[id] : null;
+    const label = id ? `Dito ${i + 1}: ${ring.name}: ${ring.text}${editable ? " (tocca per togliere)" : ""}` : `Dito ${i + 1}: libero`;
+    const tip = id ? { "data-ring": id, "data-tip": [`Sul dito ${i + 1}`, editable ? "Tocca per toglierlo" : null].filter(Boolean).join("\n") } : {};
+    // A filled finger wears the same ring as on the table: band around the finger, gem on top.
     const content = id
-      ? [h("span", { class: "slot-icon", "aria-hidden": "true", text: RING_BY_ID[id].icon }),
+      ? [h("span", { class: "slot-band", "aria-hidden": "true" }, h("span", { class: "slot-icon", text: ring.icon })),
+        h("span", { class: "rt-gem slot-gem", "aria-hidden": "true" }),
         h("span", { class: "slot-name", "aria-hidden": "true", text: shortName(id) })]
       : [h("span", { class: "slot-num", "aria-hidden": "true", text: String(i + 1) })];
     const slot = editable && id
-      ? h("button", { class: "finger-slot filled", type: "button", "aria-label": label, "data-k": `finger-${i}`,
-        vars: { "--gem": RING_BY_ID[id].gem },
+      ? h("button", { class: "finger-slot filled", type: "button", "aria-label": label, "data-k": `finger-${i}`, ...tip,
+        vars: { "--gem": ring.gem },
         onclick: () => { sel.rings.splice(i, 1); render(); } }, ...content)
       : h("span", { class: `finger-slot${id ? " filled" : ""}`, role: "img", "aria-label": label,
-        vars: id ? { "--gem": RING_BY_ID[id].gem } : null }, ...content);
+        tabindex: id ? "0" : null, "data-k": id ? `fingerv-${i}` : null, ...tip,
+        vars: id ? { "--gem": ring.gem } : null }, ...content);
     fingers.push(h("li", { class: "finger", vars: { "--h": `${heights[i]}%` } }, slot));
   }
   const detail = placed.length
@@ -729,29 +764,37 @@ function handVisual(move, placed, editable, sel) {
     detail);
 }
 
-function oppTable(m, stolen) {
-  return h("section", { class: "table-block opp", "aria-label": `Tavolo di ${state.oppName}` },
+function oppTable(m, stolen, boxed = false) {
+  return h("section", { class: `table-block opp${boxed ? " boxed" : ""}`, "aria-label": `Tavolo di ${state.oppName}` },
     h("div", { class: "table-head" },
       h("h3", { class: "table-title", text: `Tavolo di ${state.oppName}` }),
       h("span", { class: `opp-status${m.oppSubmitted ? " done" : ""}`, "aria-live": "polite",
         text: m.oppSubmitted ? `✓ ${state.oppName} ha confermato` : "sta scegliendo…" })),
-    h("div", { class: "ring-grid compact" }, m.table.opp.map((id) => ringMini(id, { status: tableStatus(m, "opp", id, stolen) }))));
+    h("div", { class: "ring-table" }, m.table.opp.map((id) => {
+      const status = tableStatus(m, "opp", id, stolen);
+      return ringToken(id, { status, key: `opp-${id}`, lines: [STATE_LINE[status] ?? "Attivo in questo round"] });
+    })));
 }
 
-function myTable(m, stolen, placed, editable, slots, sel) {
-  return h("section", { class: "table-block me", "aria-label": "Il tuo tavolo" },
+function myTable(m, stolen, placed, editable, slots, sel, boxed = false) {
+  return h("section", { class: `table-block me${boxed ? " boxed" : ""}`, "aria-label": "Il tuo tavolo" },
     h("div", { class: "table-head" },
       h("h3", { class: "table-title", text: "Il tuo tavolo" }),
       h("span", { class: "muted", text: `${m.active.me.length}/${m.table.me.length} attivi` })),
-    h("div", { class: "ring-grid compact" }, m.table.me.map((id) => {
+    h("div", { class: "ring-table" }, m.table.me.map((id) => {
       let status = tableStatus(m, "me", id, stolen);
       const finger = placed.indexOf(id);
       if (status === "active" && finger >= 0) status = "placed";
       const canTap = editable && (status === "placed" || (status === "active" && placed.length < slots));
-      return ringMini(id, {
+      const lines = status === "placed" ? [`Sul dito ${finger + 1}`, editable ? "Tocca per toglierlo" : null]
+        : status !== "active" ? [STATE_LINE[status]]
+        : [!editable ? (m.submitted ? "Attivo in questo round" : "Scegli prima una mossa (Sasso non ha dita)")
+          : canTap ? "Tocca per metterlo sul prossimo dito libero" : "Dita piene: togline uno per metterlo"];
+      return ringToken(id, {
         status,
         badge: status === "placed" ? `dito ${finger + 1}` : undefined,
         key: `mine-${id}`,
+        lines: lines.filter(Boolean),
         onclick: editable ? () => {
           if (status === "placed") sel.rings.splice(finger, 1);
           else sel.rings.push(id);
@@ -759,19 +802,17 @@ function myTable(m, stolen, placed, editable, slots, sel) {
         } : null,
         disabled: !canTap,
       });
-    })));
+    })),
+    h("p", { class: "muted tip-hint", text: "Passa sopra un anello (o tienilo premuto) per leggerne l'effetto." }));
 }
 
-function renderHandPhase(m, sel) {
+function renderHandPhase(m, sel, wide) {
   const done = m.submitted;
   const move = done ? m.myMove : sel.move;
   const placed = done ? m.myRings : sel.rings;
   const slots = move ? SLOTS[move] : 0;
   const stolen = stolenThisRound(m);
-  const r = m.lastResult;
-  const out = [];
-  if (r && r.roundNo === m.roundNo) out.push(resultPanel(r));
-  out.push(oppTable(m, stolen));
+  const r = m.lastResult && m.lastResult.roundNo === m.roundNo ? m.lastResult : null;
 
   const moves = h("div", { class: "moves", role: "group", "aria-label": "Mossa" },
     MOVES.map((mv) => h("button", {
@@ -800,15 +841,32 @@ function renderHandPhase(m, sel) {
         ? `${state.oppName} ha già confermato: i suoi anelli si applicheranno prima dei tuoi.`
         : "La velocità conta: chi conferma prima applica prima i suoi anelli." }));
 
-  out.push(h("section", { class: "card stack play" },
-    h("h2", { class: "play-title", text: done ? "La tua mossa" : "Scegli la mossa" }),
-    moves,
-    move ? handVisual(move, placed, !done, sel)
-      : h("p", { class: "muted", text: `Chi perde subisce i danni della mossa vincente. Pareggio: ${dmgText(DRAW_DAMAGE)} a testa.` }),
-    myTable(m, stolen, placed, !done && !!move, slots, sel),
-    confirmArea));
-  out.push(deckView(m.deck.opp, `Anelli di ${state.oppName}`, "oppDeckOpen"));
-  return out;
+  const playTitle = h("h2", { class: "play-title", text: done ? "La tua mossa" : "Scegli la mossa" });
+  const hand = move ? handVisual(move, placed, !done, sel)
+    : h("p", { class: "muted", text: `Chi perde subisce i danni della mossa vincente. Pareggio: ${dmgText(DRAW_DAMAGE)} a testa.` });
+  const mine = myTable(m, stolen, placed, !done && !!move, slots, sel, wide);
+  const opp = oppTable(m, stolen, wide);
+  const oppDeck = deckView(m.deck.opp, `Anelli di ${state.oppName}`, "oppDeckOpen");
+
+  if (!wide) {
+    return [
+      scoreboard(m),
+      hpPanel(m),
+      r ? resultPanel(r) : null,
+      opp,
+      h("section", { class: "card stack play" }, playTitle, moves, hand, mine, confirmArea),
+      oppDeck,
+    ];
+  }
+  // Wide screens: a tavern table in three columns (you | the play | the opponent).
+  const hp = hpBars(m);
+  return [h("div", { class: "hand-layout" },
+    h("div", { class: "col col-me" }, h("div", { class: "hp-panel" }, hp.me), mine),
+    h("div", { class: "col col-center" },
+      scoreboard(m),
+      h("section", { class: "card stack play" }, playTitle, moves, hand, confirmArea),
+      r ? resultPanel(r, { log: false }) : null),
+    h("div", { class: "col col-opp" }, h("div", { class: "hp-panel" }, hp.opp), opp, r ? logCard(r) : null, oppDeck))];
 }
 
 // ---------- hand result ----------
@@ -867,26 +925,38 @@ function damageTable(r) {
       h("tbody", {}, row("me"), row("opp"))));
 }
 
-function resultPanel(r, { final = false } = {}) {
+function stealList(r) {
+  const extras = [];
+  for (const id of r.stolenMe) extras.push(h("li", { text: `${state.oppName} ti ha rubato ${RING_BY_ID[id].icon} ${shortName(id)}: resta spento fino al prossimo round.` }));
+  for (const id of r.stolenOpp) extras.push(h("li", { text: `Hai rubato ${RING_BY_ID[id].icon} ${shortName(id)} a ${state.oppName}: resta spento fino al prossimo round.` }));
+  return extras.length ? h("ul", { class: "steal-list" }, extras) : null;
+}
+
+// Ring log of the last hand as its own card (wide layout, right column).
+function logCard(r) {
+  return h("section", { class: "card stack log-card", "aria-label": "Anelli dell'ultima mano" },
+    h("h3", { text: `Anelli in ordine di applicazione (${r.log.length})` }),
+    ringLogList(r),
+    stealList(r));
+}
+
+function resultPanel(r, { final = false, log = true } = {}) {
   const fresh = r !== animatedResult;
   animatedResult = r;
   const [cls, head] = outcomeHead(r);
   const speed = r.first === "me"
     ? "Sei stato più veloce: i tuoi anelli si applicano per primi"
     : `${state.oppName} è stato più veloce: i suoi anelli si applicano per primi`;
-  const extras = [];
-  for (const id of r.stolenMe) extras.push(h("li", { text: `${state.oppName} ti ha rubato ${RING_BY_ID[id].icon} ${shortName(id)}: resta spento fino al prossimo round.` }));
-  for (const id of r.stolenOpp) extras.push(h("li", { text: `Hai rubato ${RING_BY_ID[id].icon} ${shortName(id)} a ${state.oppName}: resta spento fino al prossimo round.` }));
   return h("section", { class: `card result ${cls}${r.roundEnded ? " round-ended" : ""}${fresh ? " pop" : ""}`, "aria-live": "polite", "aria-label": "Risultato della mano" },
     r.roundEnded ? h("h2", { class: `round-end-title ${r.roundWinner}`, text: roundEndText(r) }) : null,
     h("p", { class: "result-kicker", text: `Round ${r.roundNo} · Mano ${r.handInRound}${final ? " · ultima mano" : ""}` }),
     h("p", { class: "result-head", text: head }),
     h("div", { class: "result-moves" }, moveSide("me", r.me, r.ringsMe), h("span", { class: "result-vs", text: "vs" }), moveSide("opp", r.opp, r.ringsOpp)),
     h("p", { class: `speed-line ${r.first}`, text: speed }),
-    h("details", { class: "log-details", open: state.ui.logOpen, ontoggle: (e) => { state.ui.logOpen = e.target.open; } },
+    log ? h("details", { class: "log-details", open: state.ui.logOpen, ontoggle: (e) => { state.ui.logOpen = e.target.open; } },
       h("summary", {}, `Anelli in ordine di applicazione (${r.log.length})`),
       ringLogList(r),
-      extras.length ? h("ul", { class: "steal-list" }, extras) : null),
+      stealList(r)) : null,
     damageTable(r));
 }
 
@@ -924,13 +994,8 @@ function renderGame() {
   let body;
   if (m.phase === "deck") body = renderDeckPhase(m, sel);
   else if (m.phase === "roll" || m.phase === "table") body = m.phase === "roll" ? rollView(m).el : renderTablePhase(m, sel);
-  else body = renderHandPhase(m, sel);
-  return [
-    scoreboard(m),
-    m.phase === "hand" ? hpPanel(m) : null,
-    ...[].concat(body),
-    exitBtn(),
-  ];
+  else return [...renderHandPhase(m, sel, isWide()), exitBtn()];
+  return [scoreboard(m), ...[].concat(body), exitBtn()];
 }
 
 // ---------- match end ----------
@@ -1075,9 +1140,138 @@ function setupRules() {
   if (saved) set(true, { focus: false, save: false });
 }
 
+// ---------- ring tooltip (one shared parchment popover, outside #app) ----------
+// Any element with data-ring (and optional data-tip: state lines separated by "\n") gets it on
+// mouse hover and keyboard focus. On touch, a tap keeps its normal action and a long press shows
+// the tooltip (read-only rings also show it on tap). Text is set with textContent only.
+
+const LONG_PRESS_MS = 450;
+const tipUi = { el: null, gem: null, icon: null, name: null, text: null, list: null, anchor: null, key: null, press: null, eatClick: false };
+
+const ringAnchor = (target) => (target instanceof Element ? target.closest("[data-ring]") : null);
+
+function showTip(anchor, animate = true) {
+  const ring = RING_BY_ID[anchor.dataset.ring];
+  if (!ring) return;
+  const t = tipUi;
+  t.gem.style.setProperty("--gem", ring.gem);
+  t.icon.textContent = ring.icon;
+  t.name.textContent = ring.name;
+  t.text.textContent = ring.text;
+  const lines = (anchor.dataset.tip || "").split("\n").filter(Boolean);
+  t.list.replaceChildren(...lines.map((line) => h("li", { text: line })));
+  t.list.hidden = !lines.length;
+  t.anchor = anchor;
+  t.key = anchor.dataset.k || null;
+  positionTip();
+  if (animate && !t.el.classList.contains("show")) {
+    t.el.classList.remove("show");
+    void t.el.offsetWidth; // restart the entry transition
+  }
+  t.el.classList.add("show");
+}
+
+function hideTip() {
+  tipUi.anchor = null;
+  tipUi.key = null;
+  tipUi.el?.classList.remove("show");
+}
+
+// Above the ring, centered; flips below when there is no room, clamped to the viewport.
+function positionTip() {
+  const { el, anchor } = tipUi;
+  const a = anchor.getBoundingClientRect();
+  const vw = document.documentElement.clientWidth;
+  const vh = window.innerHeight;
+  const w = el.offsetWidth;
+  const ht = el.offsetHeight;
+  const gap = 10;
+  const pad = 8;
+  let below = a.top - gap - ht < pad;
+  if (below && a.bottom + gap + ht > vh - pad && a.top > vh - a.bottom) below = false;
+  const cx = a.left + a.width / 2;
+  const left = Math.max(pad, Math.min(cx - w / 2, vw - w - pad));
+  el.style.left = `${Math.round(left)}px`;
+  el.style.top = `${Math.round(below ? a.bottom + gap : a.top - gap - ht)}px`;
+  el.dataset.side = below ? "below" : "above";
+  el.style.setProperty("--ax", `${Math.round(Math.max(16, Math.min(cx - left, w - 16)))}px`);
+}
+
+// After a re-render the anchor is a new element: follow it by its data-k, or close.
+function refreshTip() {
+  const t = tipUi;
+  if (!t.anchor || t.anchor.isConnected) return;
+  const next = t.key ? [...document.querySelectorAll("[data-ring][data-k]")].find((x) => x.dataset.k === t.key) : null;
+  if (next) showTip(next, false);
+  else hideTip();
+}
+
+function setupTooltip() {
+  const t = tipUi;
+  t.gem = h("span", { class: "tip-gem" }, h("span", { class: "rt-gem" }));
+  t.icon = h("span", { class: "tip-icon" });
+  t.name = h("span", { class: "tip-name" });
+  t.text = h("p", { class: "tip-text" });
+  t.list = h("ul", { class: "tip-state" });
+  t.el = h("div", { class: "ring-tip", "aria-hidden": "true" },
+    h("div", { class: "tip-head" }, t.gem, t.icon, t.name), t.text, t.list);
+  document.body.append(t.el);
+
+  const cancelPress = () => { clearTimeout(t.press?.timer); t.press = null; };
+  document.addEventListener("pointerover", (e) => {
+    if (e.pointerType === "touch") return;
+    const a = ringAnchor(e.target);
+    if (a && a !== t.anchor) showTip(a);
+  });
+  document.addEventListener("pointerout", (e) => {
+    if (e.pointerType === "touch") return;
+    const a = ringAnchor(e.target);
+    if (a && a === t.anchor && !a.contains(e.relatedTarget)) hideTip();
+  });
+  document.addEventListener("focusin", (e) => {
+    const a = ringAnchor(e.target);
+    if (a && a === e.target && a.matches(":focus-visible")) showTip(a);
+  });
+  document.addEventListener("focusout", (e) => {
+    if (t.anchor && e.target === t.anchor) hideTip();
+  });
+  document.addEventListener("pointerdown", (e) => {
+    t.eatClick = false;
+    t.lastType = e.pointerType;
+    cancelPress();
+    if (e.pointerType !== "touch") return;
+    const a = ringAnchor(e.target);
+    if (!a) return;
+    t.press = { x: e.clientX, y: e.clientY,
+      timer: setTimeout(() => { t.press = null; t.eatClick = true; showTip(a); }, LONG_PRESS_MS) };
+  });
+  document.addEventListener("pointermove", (e) => {
+    if (t.press && Math.hypot(e.clientX - t.press.x, e.clientY - t.press.y) > 10) cancelPress();
+  });
+  document.addEventListener("pointerup", cancelPress);
+  document.addEventListener("pointercancel", cancelPress);
+  // The click after a long press must not also place/remove the ring.
+  document.addEventListener("click", (e) => {
+    if (t.eatClick) {
+      t.eatClick = false;
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    const a = ringAnchor(e.target);
+    if (a && a.tagName !== "BUTTON" && t.lastType === "touch") { if (a === t.anchor) hideTip(); else showTip(a); } // read-only ring: tap toggles
+    else if (!a && t.lastType === "touch") hideTip();
+  }, true);
+  document.addEventListener("contextmenu", (e) => { if (ringAnchor(e.target)) e.preventDefault(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") hideTip(); });
+  window.addEventListener("scroll", () => { if (t.anchor) positionTip(); }, { passive: true, capture: true });
+  window.addEventListener("resize", hideTip);
+}
+
 // ---------- boot ----------
 
 setupRules();
+setupTooltip();
 const urlCode = readRoomFromUrl();
 if (urlCode) join(urlCode);
 else render();

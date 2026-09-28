@@ -71,7 +71,7 @@
 }
 
 /* Parchment context: the same tokens, in ink. */
-.card, .hp-panel, .deck-view, .rules-panel, .table-block.opp {
+.card, .hp-panel, .deck-view, .rules-panel, .table-block.opp, .table-block.boxed {
   color-scheme: light;
   --fg: var(--ink);
   --muted: var(--ink-muted);
@@ -249,7 +249,7 @@ input::placeholder { color: #8a7050; opacity: 1; }
 .field-label { margin: 0; text-align: left; font-family: var(--font-head); font-weight: 700; font-size: 0.86rem; letter-spacing: 0.03em; color: var(--muted); }
 
 /* Parchment card with a thin brass frame. */
-.card, .hp-panel, .deck-view, .table-block.opp {
+.card, .hp-panel, .deck-view, .table-block.opp, .table-block.boxed {
   border: 1px solid var(--gold-deep);
   background-color: var(--parch);
   background-image:
@@ -509,7 +509,7 @@ input::placeholder { color: #8a7050; opacity: 1; }
 
 /* ---------- rings: faceted gems in a gold setting ---------- */
 .gem { display: none; } /* the gem is drawn behind the ring icon (see .ring-icon) */
-.ring-icon, .slot-icon {
+.ring-icon {
   position: relative;
   display: inline-grid;
   place-items: center;
@@ -550,13 +550,194 @@ input::placeholder { color: #8a7050; opacity: 1; }
 }
 .ring-grid.compact { grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr)); gap: 0.45rem; }
 
-/* Deck builder / table picker card (toggle button) */
-.ring-card {
+/* ---------- physical rings: a metal band lying on the table, the gem mounted on top ---------- */
+.rt-ring {
+  --metal-hi: #fff3c4;
+  --metal-1: var(--gold-hi);
+  --metal-2: var(--gold);
+  --metal-3: var(--gold-lo);
+  --metal-4: var(--gold-deep);
+  position: relative;
+  display: block;
+  flex: 0 0 auto;
+  width: 3.6rem;
+  height: 2.5rem;
+  margin-top: 0.75rem; /* room for the gem */
+  filter: drop-shadow(0 3px 2px rgb(0 0 0 / 0.6));
+  transition: filter 0.15s ease, transform 0.15s ease;
+}
+/* The band: an elliptical ring (seen at an angle); the mask cuts the hole, so the table shows through. */
+.rt-band {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background:
+    radial-gradient(closest-side, transparent 58%, rgb(0 0 0 / 0.5) 61%, transparent 70%, transparent 86%, rgb(0 0 0 / 0.35) 100%),
+    conic-gradient(from 200deg, var(--metal-hi), var(--metal-1) 8%, var(--metal-2) 20%, var(--metal-3) 34%, var(--metal-1) 47%, var(--metal-hi) 54%, var(--metal-2) 66%, var(--metal-4) 80%, var(--metal-1) 93%, var(--metal-hi));
+  -webkit-mask: radial-gradient(closest-side, transparent 58%, #000 61%, #000 95%, transparent 100%);
+  mask: radial-gradient(closest-side, transparent 58%, #000 61%, #000 95%, transparent 100%);
+}
+.rt-icon {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding-top: 0.3rem;
+  font-size: 0.8rem;
+  line-height: 1;
+  filter: drop-shadow(0 1px 1px rgb(0 0 0 / 0.7));
+}
+/* Gold setting (prongs) behind the gem. */
+.rt-ring::before {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  left: 50%;
+  top: -0.78rem;
+  width: 1.9rem;
+  height: 1.55rem;
+  translate: -50% 0;
+  clip-path: polygon(20% 0, 80% 0, 100% 42%, 50% 100%, 0 42%);
+  background: linear-gradient(180deg, var(--metal-hi), var(--metal-2) 45%, var(--metal-4));
+}
+.rt-gem {
+  position: absolute;
+  z-index: 2;
+  left: 50%;
+  top: -0.65rem;
+  width: 1.6rem;
+  height: 1.3rem;
+  translate: -50% 0;
+  clip-path: polygon(22% 0, 78% 0, 100% 40%, 50% 100%, 0 40%);
+  background:
+    radial-gradient(circle at 36% 22%, rgb(255 255 255 / 0.95) 0 7%, rgb(255 255 255 / 0) 24%),
+    linear-gradient(180deg, color-mix(in srgb, var(--gem, #888) 45%, white) 0 40%, transparent 40%),
+    conic-gradient(from 180deg at 50% 40%,
+      color-mix(in srgb, var(--gem, #888) 60%, white) 0 12.5%,
+      var(--gem, #888) 0 25%,
+      color-mix(in srgb, var(--gem, #888) 60%, black) 0 37.5%,
+      color-mix(in srgb, var(--gem, #888) 80%, white) 0 50%,
+      color-mix(in srgb, var(--gem, #888) 50%, black) 0 62.5%,
+      var(--gem, #888) 0 75%,
+      color-mix(in srgb, var(--gem, #888) 40%, black) 0 87.5%,
+      color-mix(in srgb, var(--gem, #888) 70%, white) 0 100%);
+  background-blend-mode: normal, soft-light, normal;
+}
+
+/* Wooden table surface holding the rings. */
+.ring-table {
+  --fg: #f6e9cc;
+  --muted: #dcc49a;
+  --focus: var(--gold-hi);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.35rem 0.3rem;
+  padding: 0.55rem 0.4rem 0.45rem;
+  border: 1px solid #1c1009;
+  border-radius: var(--radius-sm);
+  background:
+    radial-gradient(ellipse at 50% 15%, rgb(255 190 110 / 0.16), transparent 70%),
+    var(--grain),
+    repeating-linear-gradient(0deg, rgb(0 0 0 / 0.28) 0 1px, rgb(255 220 170 / 0.05) 1px 2px, transparent 2px 2.4rem),
+    linear-gradient(180deg, #4d301a, #2e1b0e);
+  box-shadow: inset 0 2px 8px rgb(0 0 0 / 0.6), 0 1px 0 rgb(255 255 255 / 0.4);
+  color: var(--fg);
+}
+
+.ring-token {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 0.3rem;
+  align-items: center;
+  gap: 0.2rem;
+  width: 4.7rem;
   min-height: var(--tap);
-  padding: 0.5rem 0.5rem 0.55rem;
+  padding: 0.2rem 0.15rem 0.3rem;
+  border: 0;
+  border-radius: 0.6rem;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+button.ring-token { cursor: pointer; }
+button.ring-token[aria-disabled="true"] { cursor: default; }
+button.ring-token.is-active[aria-disabled="true"] { opacity: 0.7; }
+button.ring-token:not([aria-disabled="true"]):hover .rt-ring { transform: translateY(-3px); filter: drop-shadow(0 6px 4px rgb(0 0 0 / 0.55)); }
+.rt-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.74rem;
+  font-weight: 800;
+  line-height: 1.2;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 0.8);
+}
+.rt-badge {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 3;
+  padding: 0 0.35rem;
+  border: 1px solid var(--gold-deep);
+  border-radius: 0.3rem;
+  background: linear-gradient(180deg, var(--gold-hi), var(--gold));
+  color: var(--ink);
+  font-family: var(--font-head);
+  font-size: 0.62rem;
+  font-weight: 900;
+  line-height: 1.45;
+  text-transform: uppercase;
+}
+/* Placed on a finger: glowing. */
+.ring-token.is-placed { background: radial-gradient(ellipse at 50% 45%, rgb(241 212 136 / 0.3), transparent 70%); }
+.ring-token.is-placed .rt-ring { transform: translateY(-3px); filter: drop-shadow(0 0 5px var(--gold-hi)) drop-shadow(0 0 2px #fff6d0); }
+/* Used: dull grey metal, cracked gem. */
+.ring-token:is(.is-used, .is-stolen) .rt-ring { --metal-hi: #d6d2cb; --metal-1: #a9a49b; --metal-2: #858078; --metal-3: #5d5952; --metal-4: #3f3c37; transform: rotate(-8deg); }
+.ring-token:is(.is-used, .is-stolen) .rt-gem { filter: grayscale(0.85) brightness(0.7); }
+.ring-token.is-used .rt-gem::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--crack) center / 100% 100% no-repeat;
+}
+.ring-token:is(.is-used, .is-stolen) .rt-icon { opacity: 0.5; filter: grayscale(1); }
+.ring-token:is(.is-used, .is-stolen) .rt-name { text-decoration: line-through; opacity: 0.7; }
+/* Stolen: stamped with a red wax seal. */
+.rt-seal {
+  position: absolute;
+  z-index: 3;
+  top: 1.35rem;
+  left: 50%;
+  translate: -50% 0;
+  rotate: -12deg;
+  padding: 0.05rem 0.4rem;
+  border-radius: 45% 55% 50% 50% / 60% 50% 55% 45%;
+  background: radial-gradient(circle at 35% 30%, var(--wax-hi), var(--wax) 60%, var(--wax-lo));
+  color: #fff0dc;
+  box-shadow: 0 0 0 2px rgb(155 28 28 / 0.5), 0 2px 4px rgb(0 0 0 / 0.5);
+  font-family: var(--font-head);
+  font-size: 0.6rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-shadow: 0 1px 0 rgb(0 0 0 / 0.4);
+}
+
+/* Deck builder / table picker card (toggle button): the ring on a wooden coaster + its rules. */
+.ring-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.55rem;
+  min-height: var(--tap);
+  padding: 0.45rem 1.9rem 0.45rem 0.45rem;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: linear-gradient(180deg, rgb(255 252 240 / 0.75), rgb(255 248 228 / 0.35));
@@ -568,13 +749,25 @@ input::placeholder { color: #8a7050; opacity: 1; }
   cursor: pointer;
   transition: border-color 0.12s ease, background-color 0.12s ease, box-shadow 0.12s ease;
 }
-.ring-card-head { display: flex; align-items: center; gap: 0.4rem; }
-.ring-card .ring-name { flex: 1 1 auto; min-width: 0; font-size: 0.9rem; overflow-wrap: anywhere; }
+.rc-plate {
+  display: grid;
+  place-items: center;
+  width: 4.1rem;
+  height: 4.1rem;
+  border-radius: 50%;
+  background: var(--grain), radial-gradient(circle at 40% 35%, #5a3a20, #2e1b0e 75%);
+  box-shadow: inset 0 2px 6px rgb(0 0 0 / 0.6), 0 0 0 2px #1c1009, 0 1px 0 3px rgb(201 162 74 / 0.4);
+}
+.rc-plate .rt-ring { width: 3rem; height: 2.1rem; margin-top: 0.55rem; }
+.rc-body { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
+.ring-card .ring-name { font-size: 0.9rem; overflow-wrap: anywhere; }
 .ring-check {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.4rem;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  flex: 0 0 auto;
   width: 1.25rem;
   height: 1.25rem;
   border: 2px solid var(--border);
@@ -587,95 +780,64 @@ input::placeholder { color: #8a7050; opacity: 1; }
   background: linear-gradient(180deg, rgb(241 212 136 / 0.55), rgb(201 162 74 / 0.3));
   box-shadow: inset 0 0 0 1px var(--gold), 0 0 0 2px var(--gold), 0 2px 6px rgb(90 60 20 / 0.35);
 }
+.ring-card.is-selected .rt-ring { filter: drop-shadow(0 0 5px var(--gold-hi)) drop-shadow(0 0 2px #fff6d0); }
 .ring-card.is-selected .ring-check {
   border-color: var(--wax-lo);
   background: radial-gradient(circle at 35% 30%, var(--wax-hi), var(--wax) 65%, var(--wax-lo));
   color: #fff3e4;
 }
 .ring-card:disabled { opacity: 0.5; cursor: default; }
-.ring-card:disabled .ring-icon { filter: saturate(0.3); }
+.ring-card:disabled .rt-ring { filter: saturate(0.3); }
 .ring-card:not(:disabled):hover { border-color: var(--gold-lo); box-shadow: 0 0 0 1px var(--gold), 0 2px 6px rgb(90 60 20 / 0.3); }
 
-/* Table ring (compact chip with text) */
-.ring-mini {
-  position: relative;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: start;
-  column-gap: 0.45rem;
-  min-height: var(--tap);
-  padding: 0.45rem 0.5rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: linear-gradient(180deg, rgb(255 252 240 / 0.7), rgb(255 248 228 / 0.3));
-  color: var(--fg);
-  box-shadow: 0 1px 2px rgb(90 60 20 / 0.18);
-  font: inherit;
-  font-size: 0.88rem;
-  text-align: left;
-}
-.ring-mini .ring-icon { width: 1.85rem; height: 1.85rem; font-size: 0.98rem; }
-.ring-mini .ring-body { display: flex; flex-direction: column; min-width: 0; }
-.ring-mini .ring-text { font-size: 0.76rem; }
-button.ring-mini { cursor: pointer; }
-button.ring-mini:not(:disabled):hover { border-color: var(--gold-lo); box-shadow: 0 0 0 1px var(--gold); }
-button.ring-mini:disabled { cursor: default; }
-.ring-badge {
-  position: absolute;
-  top: -0.5rem;
-  right: 0.35rem;
-  padding: 0 0.45rem;
-  border-radius: 0.3rem;
-  font-family: var(--font-head);
-  font-size: 0.66rem;
-  font-weight: 900;
-  line-height: 1.5;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-.ring-mini.is-placed {
-  border-color: var(--gold-lo);
-  background: linear-gradient(180deg, rgb(241 212 136 / 0.6), rgb(201 162 74 / 0.32));
-  box-shadow: 0 0 0 2px var(--gold), 0 0 10px rgb(241 212 136 / 0.6);
-}
-.badge-placed {
-  border: 1px solid var(--gold-deep);
-  background: linear-gradient(180deg, var(--gold-hi), var(--gold));
+/* ---------- ring tooltip: a parchment scroll with a gold border ---------- */
+.ring-tip {
+  position: fixed;
+  z-index: 40;
+  left: 0;
+  top: 0;
+  width: max-content;
+  max-width: min(18rem, calc(100vw - 16px));
+  padding: 0.65rem 0.8rem 0.7rem;
+  border: 2px solid var(--gold);
+  border-radius: 0.55rem;
+  background-color: var(--parch);
+  background-image: var(--paper), linear-gradient(180deg, var(--parch-hi), var(--parch-2));
+  box-shadow: inset 0 0 0 1px rgb(255 248 225 / 0.9), inset 0 0 0 3px rgb(122 88 28 / 0.35), 0 10px 26px rgb(0 0 0 / 0.55);
   color: var(--ink);
+  text-align: left;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(6px) scale(0.92);
+  transform-origin: var(--ax, 50%) 100%;
+  transition: opacity 0.16s ease, transform 0.18s cubic-bezier(0.2, 1.3, 0.4, 1), visibility 0s linear 0.18s;
 }
-/* Used: the gem is dulled and cracked. */
-.ring-mini.is-used { background: rgb(120 100 70 / 0.12); border-color: #b3a58c; box-shadow: none; }
-.ring-mini.is-used .ring-icon { filter: grayscale(1) brightness(0.8) contrast(0.9); border-color: #9d9383; }
-.ring-mini.is-used .ring-icon::after,
-.ring-mini.is-stolen .ring-icon::after {
+.ring-tip[data-side="below"] { transform: translateY(-6px) scale(0.92); transform-origin: var(--ax, 50%) 0; }
+.ring-tip.show { opacity: 1; visibility: visible; transform: none; transition-delay: 0s; }
+.ring-tip::after { /* the pointer */
   content: "";
   position: absolute;
-  inset: -1px;
-  border-radius: 50%;
-  background: var(--crack) center / 100% 100% no-repeat;
+  left: var(--ax, 50%);
+  top: 100%;
+  width: 0.8rem;
+  height: 0.8rem;
+  translate: -50% -50%;
+  rotate: 45deg;
+  border-right: 2px solid var(--gold);
+  border-bottom: 2px solid var(--gold);
+  background: var(--parch-2);
 }
-.ring-mini.is-used .ring-name { text-decoration: line-through; color: var(--muted); }
-.ring-mini.is-used .ring-text { opacity: 0.85; }
-.badge-used { background: #6e665a; color: #f6efe2; }
-/* Stolen: shadowed gem in a dashed wax-red frame, stamped RUBATO. */
-.ring-mini.is-stolen {
-  border: 2px dashed var(--stolen);
-  background: repeating-linear-gradient(135deg, rgb(155 28 28 / 0.08) 0 6px, transparent 6px 12px);
-  box-shadow: none;
-}
-.ring-mini.is-stolen .ring-icon { filter: grayscale(0.6) brightness(0.55); border-color: #6b4a3a; }
-.ring-mini.is-stolen .ring-icon::after { background: none; }
-.ring-mini.is-stolen .ring-name { text-decoration: line-through; color: var(--stolen); }
-.ring-mini.is-stolen .ring-text { opacity: 0.85; }
-.badge-stolen {
-  top: -0.6rem;
-  border: 2px solid #fff0e0;
-  outline: 1px dashed var(--wax-lo);
-  background: var(--wax);
-  color: #fff3e4;
-  box-shadow: 0 2px 4px rgb(0 0 0 / 0.4);
-  transform: rotate(-6deg);
-}
+.ring-tip[data-side="below"]::after { top: 0; rotate: 225deg; background: var(--parch-hi); }
+.tip-head { display: flex; align-items: center; gap: 0.45rem; padding-bottom: 0.35rem; margin-bottom: 0.35rem; border-bottom: 1px solid #b8965c; }
+.tip-gem { position: relative; flex: 0 0 auto; width: 1.9rem; height: 1.55rem; }
+.tip-gem .rt-gem { top: 0; width: 1.9rem; height: 1.55rem; filter: drop-shadow(0 1px 1px rgb(0 0 0 / 0.4)); }
+.tip-icon { font-size: 1.05rem; line-height: 1; }
+.tip-name { font-family: var(--font-head); font-weight: 800; font-size: 1.02rem; line-height: 1.2; color: var(--wax); }
+.tip-text { margin: 0; font-size: 0.9rem; line-height: 1.35; }
+.tip-state { margin: 0.4rem 0 0; padding: 0; list-style: none; display: grid; gap: 0.15rem; font-size: 0.8rem; font-style: italic; font-weight: 700; color: var(--ink-muted); }
+.tip-state li::before { content: "❧ "; color: var(--gold-lo); font-style: normal; }
+.tip-hint { font-size: 0.8rem; font-style: italic; }
 
 .deck-view {
   width: 100%;
@@ -692,7 +854,7 @@ button.ring-mini:disabled { cursor: default; }
   cursor: pointer;
 }
 .deck-view[open] > summary { border-bottom: 1px solid var(--border); }
-.deck-view > .ring-grid { padding: 0.75rem; }
+.deck-view > .ring-table { margin: 0.75rem; }
 
 /* ---------- d10: an ivory kite-shaped die in a gold rim ---------- */
 .roll { display: flex; flex-direction: column; align-items: center; gap: 0.6rem; }
@@ -759,6 +921,7 @@ button.ring-mini:disabled { cursor: default; }
   border-radius: var(--radius);
 }
 .table-block.me { padding-top: 0.75rem; border-top: 1px solid var(--border); }
+.table-block.me.boxed { padding: 0.75rem; border-top: 4px solid var(--sapphire); border-radius: var(--radius); }
 .table-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem; flex-wrap: wrap; }
 .table-title { font-size: 0.98rem; }
 .table-block.opp .table-title { color: var(--opp); }
@@ -904,22 +1067,39 @@ button.ring-mini:disabled { cursor: default; }
   font: inherit;
   line-height: 1.1;
 }
-/* A filled slot is a gold band around the finger with the gem on top. */
+/* A filled slot wears the same ring as on the table: a gold band around the finger, gem on top. */
 .finger-slot.filled {
-  gap: 0.1rem;
-  width: 3.55rem;
-  padding: 0.2rem 0.1rem 0.15rem;
-  border: 1px solid var(--gold-deep);
-  border-radius: 0.5rem;
-  background: linear-gradient(180deg, #fff0b8 0%, var(--gold-hi) 18%, var(--gold) 55%, #9b7528 100%);
+  position: relative;
+  justify-content: flex-end;
+  width: 3.8rem;
+  height: 3.1rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: var(--ink);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.7), inset 0 -2px 0 rgb(77 54 15 / 0.4), 0 2px 4px rgb(0 0 0 / 0.45);
+  -webkit-touch-callout: none;
+  user-select: none;
 }
+.slot-band {
+  position: absolute;
+  left: 0.05rem;
+  right: 0.05rem;
+  bottom: 0.9rem;
+  height: 1.05rem;
+  display: grid;
+  place-items: center;
+  border-radius: 0.45rem / 0.55rem;
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 0.5), transparent 35%, rgb(0 0 0 / 0.25)),
+    linear-gradient(90deg, var(--gold-lo), var(--gold) 18%, #fff0b8 45%, var(--gold-hi) 60%, var(--gold) 80%, var(--gold-deep));
+  box-shadow: 0 0 0 1px var(--gold-deep), 0 2px 3px rgb(0 0 0 / 0.45);
+}
+.finger-slot.filled .slot-gem { top: auto; bottom: 1.55rem; width: 1.45rem; height: 1.2rem; filter: drop-shadow(0 0 1px var(--gold-deep)); }
+.slot-icon { position: relative; font-size: 0.66rem; line-height: 1; }
+.slot-name { position: absolute; left: 50%; bottom: 0; translate: -50% 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.64rem; font-weight: 800; line-height: 1.3; }
 button.finger-slot { cursor: pointer; }
-button.finger-slot:hover { filter: brightness(1.08); }
+button.finger-slot:hover .slot-band { filter: brightness(1.1); }
 .slot-num { font-family: var(--font-head); font-weight: 900; }
-.slot-icon { width: 1.75rem; height: 1.75rem; font-size: 0.95rem; }
-.slot-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.66rem; font-weight: 800; }
 .palm {
   display: grid;
   place-items: center;
@@ -1168,5 +1348,32 @@ button.finger-slot:hover { filter: brightness(1.08); }
   .fingers { gap: 0.2rem; }
   .finger { width: 2.95rem; }
   .finger-slot { width: 2.65rem; }
-  .finger-slot.filled { width: 3rem; }
+  .finger-slot.filled { width: 3.2rem; }
+}
+
+/* ---------- wide screens: the whole tavern table ---------- */
+@media (min-width: 1000px) {
+  #app.wide { max-width: 104rem; padding-inline: 1.5rem; padding-top: 3.25rem; }
+  #app.wide > * { max-width: 40rem; }
+  #app.wide > :is(.hand-layout, .phase-deck, .phase-table) { max-width: none; }
+  .phase-deck .ring-grid, .phase-table .ring-grid { grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); }
+  .hand-layout {
+    width: 100%;
+    display: grid;
+    grid-template-columns: minmax(15rem, 1fr) minmax(0, 1.45fr) minmax(15rem, 1fr);
+    align-items: start;
+    gap: 1rem;
+  }
+  .hand-layout .col { display: flex; flex-direction: column; gap: 0.8rem; min-width: 0; }
+  .hand-layout .scoreboard { flex-direction: row; flex-wrap: wrap; justify-content: center; gap: 0.25rem 1rem; padding: 0.45rem 1.5rem; }
+  .hand-layout .score { width: auto; }
+  .hand-layout .score-num { font-size: 1.9rem; }
+  .hand-layout .round-info { flex-basis: 100%; }
+  .hand-layout .play { padding: 1rem 1.1rem; gap: 0.6rem; }
+  .hand-layout .play .sticky-bar { position: static; margin: 0 -1.1rem -1rem; }
+  .hand-layout .move-btn { min-height: 5.6rem; }
+  .hand-layout .move-emoji { font-size: 2.3rem; }
+  .hand-layout .ring-token { width: 5rem; }
+  .hand-layout .log-card { padding: 1rem; text-align: left; gap: 0.4rem; }
+  .hand-layout .log-card .ring-log { margin: 0; }
 }
