@@ -2,7 +2,7 @@
 // Screens: home, lobby (host waiting), joining (guest), game (includes end-of-match view),
 // disconnected. All DOM is built with textContent; opponent data is never parsed as HTML.
 
-import { Match, MOVES, EMOJI, LABEL, MAX_HP, DAMAGE, DRAW_DAMAGE } from "./game.js";
+import { Match, MOVES, EMOJI, LABEL, MAX_HP, DAMAGE, DRAW_DAMAGE, ROUNDS_TO_WIN } from "./game.js";
 import { hostRoom, joinRoom, buildInviteLink, readRoomFromUrl, normalizeCode } from "./net.js";
 
 const NAME_KEY = "handos-name";
@@ -423,31 +423,99 @@ function hpPanel(m) {
       hpOpp, prev?.hpOpp ?? MAX_HP, fresh ? r?.dmgOpp ?? 0 : 0, elapsed));
 }
 
-function revealCard(r) {
+// Pop-in animation only the first time a given hand result is shown.
+function freshResult(r) {
   const fresh = r !== animatedResult;
   animatedResult = r;
-  let [text, cls] = r.outcome === 1 ? [`Hai vinto la mano! −${r.dmgOpp} HP all'avversario`, "win"]
+  return fresh;
+}
+
+const winnerDesc = (w) => (w === "me" ? "vinto da te" : w === "opp" ? `vinto da ${state.oppName}` : "doppio KO, un punto a testa");
+const winnerShort = (w) => (w === "me" ? "Tu" : w === "opp" ? state.oppName : "Doppio KO");
+
+// Round marker: colored for me / opp / both (double KO), or hollow for the round being played.
+function pip(roundNo, kind) {
+  const desc = `Round ${roundNo}: ${kind === "current" ? "in corso" : winnerDesc(kind)}`;
+  return h("li", { class: `pip ${kind}`, title: desc },
+    h("span", { "aria-hidden": "true", text: String(roundNo) }),
+    h("span", { class: "sr-only", text: desc }));
+}
+
+function pips(m) {
+  const items = m.rounds.map((rd) => pip(rd.roundNo, rd.winner));
+  if (!m.winner) items.push(pip(m.roundNo, "current"));
+  return h("ol", { class: "pips", "aria-label": "Round della partita" }, items);
+}
+
+const isTied = (m) => !m.winner && m.points.me === m.points.opp && m.points.me >= ROUNDS_TO_WIN;
+
+function scoreLine(m, cls = "") {
+  return h("p", { class: `score ${cls}`, "aria-label": `Round vinti: tu ${m.points.me}, ${state.oppName} ${m.points.opp}` },
+    h("span", { class: "score-name me", text: "Tu" }),
+    h("span", { class: "score-num me", text: String(m.points.me) }),
+    h("span", { class: "score-sep", text: "–", "aria-hidden": "true" }),
+    h("span", { class: "score-num opp", text: String(m.points.opp) }),
+    h("span", { class: "score-name opp", text: state.oppName }));
+}
+
+function scoreboard(m, koResult) {
+  return h("section", { class: "scoreboard", "aria-label": "Punteggio della partita" },
+    h("p", { class: "bo3", text: "Al meglio di 3" }),
+    scoreLine(m),
+    pips(m),
+    isTied(m) ? h("p", { class: "tie-hint", text: "Parità: si continua!" }) : null,
+    h("p", { class: "round-info" }, h("strong", {
+      text: koResult ? `Fine del round ${koResult.roundNo}` : `Round ${m.roundNo} · Mano ${m.handInRound}`,
+    })));
+}
+
+function handText(r) {
+  return r.outcome === 1 ? [`Hai vinto la mano! −${r.dmgOpp} HP all'avversario`, "win"]
     : r.outcome === -1 ? [`Hai perso la mano: −${r.dmgMe} HP`, "lose"]
     : [`Pareggio: −${r.dmgMe} HP a testa`, "draw"];
-  if (r.roundEnded) {
-    const rw = r.roundWinner === "me" ? "Round vinto!" : r.roundWinner === "opp" ? "Round perso." : "Doppio KO: un punto a testa!";
-    text += ` · ${rw} Punti ${r.pointsMe}–${r.pointsOpp}`;
-  }
+}
+
+function revealRow(r) {
   const side = (who, move) => h("div", { class: "reveal-side" },
     h("span", { class: "reveal-emoji", text: EMOJI[move], "aria-label": LABEL[move] }),
     h("span", { class: "reveal-who", text: who }));
+  return h("div", { class: "reveal-row" },
+    side("Tu", r.me),
+    h("span", { class: "reveal-vs", text: "vs" }),
+    side(state.oppName, r.opp));
+}
+
+function revealCard(r) {
+  const fresh = freshResult(r);
+  const [text, cls] = handText(r);
   return h("section", { class: `card reveal ${cls}${fresh ? " pop" : ""}`, "aria-live": "polite" },
-    h("div", { class: "reveal-row" },
-      side("Tu", r.me),
-      h("span", { class: "reveal-vs", text: "vs" }),
-      side(state.oppName, r.opp)),
+    revealRow(r),
     h("p", { class: "reveal-outcome", text }));
+}
+
+// Shown after a hand that ended a round (match still going), until the next move is picked.
+function roundEndCard(m, r) {
+  const fresh = freshResult(r);
+  const [title, cls] = r.roundWinner === "me" ? [`KO! Round ${r.roundNo} vinto`, "win"]
+    : r.roundWinner === "opp" ? [`KO… Round ${r.roundNo} perso`, "lose"]
+    : ["Doppio KO!", "draw"];
+  const [hand] = handText(r);
+  return h("section", { class: `card round-end ${cls}${fresh ? " pop" : ""}`, "aria-live": "polite" },
+    r.roundWinner === "both" ? h("p", { class: "round-end-kicker", text: `Fine del round ${r.roundNo}` }) : null,
+    h("h2", { class: "round-end-title" }, title,
+      r.roundWinner === "both" ? h("span", { class: "round-end-sub", text: " Un punto a testa" }) : null),
+    scoreLine(m, "score-small"),
+    h("p", { class: "round-end-hp", text: `HP finali: Tu ${r.hpMe} · ${state.oppName} ${r.hpOpp}` }),
+    h("div", { class: "round-end-hand" }, revealRow(r), h("p", { class: "reveal-outcome", text: hand })),
+    h("p", { class: "round-end-next" }, h("strong", { text: `Round ${m.roundNo}` }), `: si riparte da ${MAX_HP} HP`));
 }
 
 function renderGame() {
   const m = state.match;
   animatedEnd = null; // a match is in progress, so the next end screen is a new one (even after a rematch)
   const picked = m.myMove;
+  const r = m.lastResult;
+  const ko = r?.roundEnded && !picked ? r : null; // between rounds: round-end banner until a move is picked
   const hands = h("div", { class: "hands" },
     MOVES.map((mv) => h("button", {
       class: `hand-btn${picked === mv ? " chosen" : ""}`,
@@ -462,18 +530,27 @@ function renderGame() {
   let status;
   if (picked) status = m.oppHash ? `${state.oppName} ha scelto…` : `In attesa di ${state.oppName}…`;
   else if (m.oppHash) status = `${state.oppName} ha scelto`;
-  else status = "Scegli la tua mossa";
+  else status = ko ? `Scegli la mossa per il round ${m.roundNo}` : "Scegli la tua mossa";
 
   return [
+    scoreboard(m, ko),
     hpPanel(m),
-    h("p", { class: "round-info" }, h("strong", { text: `Round ${m.roundNo} · Mano ${m.handInRound}` }),
-      ` · Punti: Tu ${m.points.me} – ${m.points.opp} ${state.oppName}`),
-    !picked && m.lastResult ? revealCard(m.lastResult) : null,
+    ko ? roundEndCard(m, ko) : !picked && r ? revealCard(r) : null,
     hands,
     h("p", { class: "rules", text: `Pareggio: −${DRAW_DAMAGE} HP a testa` }),
     h("p", { class: `status${picked ? " waiting" : ""}`, "aria-live": "polite", text: status }),
     h("button", { class: "btn btn-secondary btn-quiet", type: "button", text: "Esci", onclick: () => goHome() }),
   ];
+}
+
+function roundsList(m) {
+  if (!m.rounds.length) return null;
+  return h("ol", { class: "round-list", "aria-label": "Round giocati" },
+    m.rounds.map((rd) => h("li", { class: "round-item" },
+      h("span", { class: `pip ${rd.winner}`, "aria-hidden": "true", text: String(rd.roundNo) }),
+      h("span", { class: "round-item-no", text: `Round ${rd.roundNo}` }),
+      h("span", { class: "round-item-who", text: winnerShort(rd.winner) }),
+      h("span", { class: "round-item-hp", text: `${rd.hpMe}–${rd.hpOpp} HP` }))));
 }
 
 function renderEnd() {
@@ -482,7 +559,7 @@ function renderEnd() {
   const endKey = m.lastResult ?? m;
   const freshEnd = endKey !== animatedEnd;
   animatedEnd = endKey;
-  const headline = m.cheated ? "L'avversario ha barato — vinci a tavolino" : won ? "Hai vinto!" : "Hai perso";
+  const headline = m.cheated ? "L'avversario ha barato — vinci a tavolino" : won ? "Hai vinto la partita!" : "Hai perso la partita";
   let rematchInfo = null;
   if (m.iWantRematch) rematchInfo = `In attesa che ${state.oppName} accetti…`;
   else if (m.oppWantsRematch) rematchInfo = `${state.oppName} vuole la rivincita!`;
@@ -490,7 +567,9 @@ function renderEnd() {
     h("section", { class: `card end ${won ? "win" : "lose"}${freshEnd ? " pop" : ""}` },
       h("p", { class: "end-emoji", text: m.cheated ? "🚩" : won ? "🏆" : "😔", "aria-hidden": "true" }),
       h("h2", { class: "end-title", text: headline }),
-      h("p", { class: "end-score", text: `Round vinti · Tu ${m.points.me} – ${m.points.opp} ${state.oppName}` })),
+      h("p", { class: "bo3", text: "Round vinti" }),
+      scoreLine(m),
+      roundsList(m)),
     hpPanel(m),
     m.lastResult && !m.cheated ? revealCard(m.lastResult) : null,
     rematchInfo ? h("p", { class: "status", "aria-live": "polite", text: rematchInfo }) : null,

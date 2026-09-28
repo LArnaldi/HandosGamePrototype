@@ -186,8 +186,109 @@ input {
   text-shadow: 0 1px 0 var(--surface), 0 0 4px var(--surface);
   white-space: nowrap;
 }
-.round-info { margin: 0; color: var(--muted); }
+.round-info { margin: 0; color: var(--muted); font-size: 0.9rem; }
 .round-info strong { color: var(--fg); }
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Match scoreboard: round points, one pip per round, current round/hand */
+.scoreboard {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+}
+.bo3 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.score {
+  width: 100%;
+  margin: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 0.5rem;
+  font-weight: 800;
+  line-height: 1.1;
+}
+.score-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 1.05rem; }
+.score-name.me { text-align: right; color: var(--accent); }
+.score-name.opp { text-align: left; color: var(--danger); }
+.score-num { font-size: 2.25rem; font-variant-numeric: tabular-nums; }
+.score-num.me { color: var(--accent); }
+.score-num.opp { color: var(--danger); }
+.score-sep { color: var(--muted); font-size: 1.5rem; }
+.score-small .score-num { font-size: 1.6rem; }
+.score-small .score-name { font-size: 0.95rem; }
+
+.pips {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.4rem;
+}
+.pip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 999px;
+  border: 2px solid transparent;
+  font-size: 0.75rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent-fg);
+}
+.pip.me { background: var(--accent); }
+.pip.opp { background: var(--danger); color: var(--surface); }
+.pip.both { background: linear-gradient(135deg, var(--accent) 50%, var(--danger) 50%); color: var(--surface); }
+.pip.current { border: 2px dashed var(--muted); color: var(--muted); background: transparent; }
+.tie-hint { margin: 0; color: var(--warning); font-weight: 800; }
+
+/* Round-end banner */
+.round-end { border-width: 2px; display: flex; flex-direction: column; align-items: center; gap: 0.4rem; }
+.round-end.win { border-color: var(--success); }
+.round-end.lose { border-color: var(--danger); }
+.round-end.draw { border-color: var(--warning); }
+.round-end-kicker { margin: 0; color: var(--muted); font-size: 0.8rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+.round-end-title { font-size: 1.5rem; line-height: 1.2; }
+.round-end-sub { display: block; font-size: 1.05rem; color: var(--muted); }
+.round-end.win .round-end-title { color: var(--success); }
+.round-end.lose .round-end-title { color: var(--danger); }
+.round-end-hp { margin: 0; color: var(--muted); font-size: 0.9rem; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.round-end-hand {
+  width: 100%;
+  padding: 0.5rem 0 0.1rem;
+  border-top: 1px solid var(--border);
+}
+.round-end-hand .reveal-emoji { font-size: 2rem; }
+.round-end-hand .reveal-outcome { margin-top: 0.25rem; font-size: 0.9rem; font-weight: 700; color: var(--muted); }
+.round-end-next {
+  width: 100%;
+  margin: 0.2rem 0 0;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.6rem;
+  background: var(--track);
+  font-weight: 600;
+}
 
 .hands {
   width: 100%;
@@ -243,11 +344,32 @@ input {
 .end-title { margin: 0.25rem 0; font-size: 1.6rem; }
 .end.win .end-title { color: var(--success); }
 .end.lose .end-title { color: var(--danger); }
-.end.draw .end-title { color: var(--accent); }
 .end.win { border: 2px solid var(--success); }
 .end.lose { border: 2px solid var(--danger); }
-.end.draw { border: 2px solid var(--warning); }
-.end-score { margin: 0; font-weight: 700; font-size: 1.1rem; overflow-wrap: anywhere; }
+.end .bo3 { margin-top: 0.5rem; }
+.end .score { margin-top: 0.2rem; }
+.round-list {
+  margin: 0.9rem 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.3rem;
+  text-align: left;
+}
+.round-item {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.3rem 0.5rem;
+  border-radius: 0.6rem;
+  background: var(--track);
+  font-size: 0.9rem;
+}
+.round-item .pip { width: 1.4rem; height: 1.4rem; font-size: 0.7rem; }
+.round-item-no { color: var(--muted); font-weight: 600; }
+.round-item-who { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; }
+.round-item-hp { color: var(--muted); font-size: 0.8rem; font-variant-numeric: tabular-nums; }
 h2 { margin: 0; }
 
 .pop { animation: pop 0.35s cubic-bezier(0.2, 1.4, 0.4, 1); }
