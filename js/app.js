@@ -8,6 +8,7 @@
 import { Match, MOVES, EMOJI, LABEL, MAX_HP, DAMAGE, DRAW_DAMAGE, ROUNDS_TO_WIN } from "./game.js";
 import { RINGS, RING_BY_ID, SLOTS, DECK_SIZE } from "./rings.js";
 import { hostRoom, joinRoom, buildInviteLink, readRoomFromUrl, normalizeCode } from "./net.js";
+import { sfx, unlockAudio, isMuted, setMuted } from "./audio.js";
 
 const NAME_KEY = "handos-name";
 const RULES_KEY = "handos-rules-open";
@@ -29,7 +30,7 @@ const state = {
   // Local, not yet confirmed choices of the current phase; reset when `key` changes.
   sel: { key: "", deck: new Set(), table: new Set(), move: null, rings: [] },
   // View-only toggles that must survive re-renders.
-  ui: { logOpen: true, oppDeckOpen: false, myDeckOpen: false },
+  ui: { logOpen: true, myDeckOpen: false },
   roundAck: null, // key of the round-ending hand whose panel the player dismissed
 };
 
@@ -38,12 +39,12 @@ let session = 0; // bumps on every new/closed session so stale callbacks are ign
 let queue = Promise.resolve();
 let gen = 0; // bumps for every new match (including rematches), to key one-shot animations
 let lastPhase = null;
-let animatedResult = null; // lastResult object whose pop-in animation already played
 let animatedEnd = null; // match end (keyed by final result) whose animation already played
 let hpAnim = null; // {result, start}: damage animation of the last resolved hand (plays once)
 let rollAnim = null; // {key, start}: d10 roll animation of the current round (plays once)
 let rollTimer = null; // re-render when the d10 roll settles
 let dieTicker = null; // random faces while the die rolls
+const rollSfx = { rolling: null, settled: null }; // round keys whose d10 sounds already played
 
 // Damage feedback timings (ms). Re-renders during the window resume the animations at the
 // elapsed time instead of restarting them; after it, bars render statically.
@@ -151,8 +152,6 @@ function startGame(role) {
   state.match = new Match({ role, send: (msg) => { if (s === session) net?.send(msg); } });
   state.oppName = DEFAULT_OPP;
   state.roundAck = null;
-  state.ui.oppDeckOpen = false;
-  animatedResult = null;
   hpAnim = null;
   gen++;
   lastPhase = null;
@@ -287,6 +286,8 @@ function render() {
     if (el && !el.disabled) el.focus({ preventScroll: true });
   }
   refreshTip();
+  soundTransitions(m);
+  syncBreakdown(m);
 }
 
 // Wide (landscape desktop) layout of the hand phase; re-render when crossing the breakpoint.
@@ -542,6 +543,7 @@ function ringCard(id, { selected, disabled, onclick, key }) {
     "aria-pressed": selected ? "true" : "false",
     disabled: !!disabled,
     "data-k": key,
+    "data-sfx": selected ? "ringOff" : "ringOn",
     vars: { "--gem": ring.gem },
     onclick,
   },
@@ -555,7 +557,7 @@ function ringCard(id, { selected, disabled, onclick, key }) {
 // Table ring: a physical ring lying on the wooden table, short name below.
 // status: active | placed | used | stolen. `lines`: state lines for the tooltip (and the label).
 // Interactive tokens use aria-disabled (not `disabled`) so hover and focus still show the tooltip.
-function ringToken(id, { status = "active", badge, onclick, disabled, key, lines = [] } = {}) {
+function ringToken(id, { status = "active", badge, onclick, disabled, key, lines = [], sound } = {}) {
   const ring = RING_BY_ID[id];
   const tag = onclick ? "button" : "div";
   const label = [`${ring.name}: ${ring.text}`, ...lines].join(". ");
@@ -566,6 +568,7 @@ function ringToken(id, { status = "active", badge, onclick, disabled, key, lines
     tabindex: onclick ? null : "0",
     role: onclick ? null : "img",
     "data-k": key,
+    "data-sfx": sound,
     "data-ring": id,
     "data-tip": lines.join("\n"),
     "aria-label": label,
@@ -643,7 +646,7 @@ function renderDeckPhase(m, sel) {
       h("p", { class: `counter${n === DECK_SIZE ? " complete" : ""}`, "aria-live": "polite", text: `Scelti ${n}/${DECK_SIZE}` }),
       n ? h("button", { class: "btn btn-secondary btn-small", type: "button", text: "Svuota", "data-k": "deck-clear",
         onclick: () => { sel.deck.clear(); render(); } }) : null,
-      h("button", { class: "btn btn-small", type: "button", text: "Conferma", "data-k": "deck-confirm",
+      h("button", { class: "btn btn-small", type: "button", text: "Conferma", "data-k": "deck-confirm", "data-sfx": "confirm",
         disabled: n !== DECK_SIZE, onclick: confirmDeck })));
 }
 
@@ -661,6 +664,8 @@ function die(value, rolling) {
 // The d10 of the current round: rolling (phase "roll", or the first ROLL_MS of phase "table"),
 // then settled. Returns {el, rolling}.
 function rollView(m) {
+  const rk = `${gen}:${m.roundNo}`;
+  if (rollSfx.rolling !== rk) { rollSfx.rolling = rk; sfx("diceRoll"); }
   if (m.phase === "roll") {
     return { rolling: true, el: h("section", { class: "card roll", "aria-live": "polite" },
       die(null, true),
@@ -669,6 +674,7 @@ function rollView(m) {
   const key = `${gen}:${m.roundNo}`;
   if (rollAnim?.key !== key) rollAnim = { key, start: reducedMotion() ? -Infinity : performance.now() };
   const left = ROLL_MS - (performance.now() - rollAnim.start);
+  if (left <= 0 && rollSfx.settled !== key) { rollSfx.settled = key; sfx("diceSettle"); }
   if (left > 0) {
     rollTimer = setTimeout(render, left);
     return { rolling: true, el: h("section", { class: "card roll" },
@@ -713,10 +719,10 @@ function renderTablePhase(m, sel) {
       }))),
       h("div", { class: "sticky-bar" },
         h("p", { class: `counter${n === m.d10 ? " complete" : ""}`, "aria-live": "polite", text: `Scelti ${n}/${m.d10}` }),
-        h("button", { class: "btn btn-small", type: "button", text: "Conferma", "data-k": "table-confirm",
+        h("button", { class: "btn btn-small", type: "button", text: "Conferma", "data-k": "table-confirm", "data-sfx": "confirm",
           disabled: n !== m.d10, onclick: confirmTable })));
   }
-  return [roll.el, pick, deckView(m.deck.opp, `Anelli di ${state.oppName}`, "oppDeckOpen")];
+  return [roll.el, pick];
 }
 
 // ---------- hand phase ----------
@@ -728,7 +734,7 @@ function handVisual(move, placed, editable, sel) {
   if (!slots) {
     return h("div", { class: "hand-area fist" },
       h("span", { class: "fist-emoji", "aria-hidden": "true", text: EMOJI.sasso }),
-      h("p", { class: "muted", text: "Sasso: nessun dito disteso, niente anelli. Colpisce forte (5 danni)." }));
+      h("p", { class: "muted", text: `Sasso: nessun dito disteso, niente anelli. Colpisce forte (${dmgText(DAMAGE.sasso)}).` }));
   }
   const heights = FINGER_HEIGHTS[slots] ?? Array(slots).fill(100);
   const fingers = [];
@@ -744,7 +750,7 @@ function handVisual(move, placed, editable, sel) {
         h("span", { class: "slot-name", "aria-hidden": "true", text: shortName(id) })]
       : [h("span", { class: "slot-num", "aria-hidden": "true", text: String(i + 1) })];
     const slot = editable && id
-      ? h("button", { class: "finger-slot filled", type: "button", "aria-label": label, "data-k": `finger-${i}`, ...tip,
+      ? h("button", { class: "finger-slot filled", type: "button", "aria-label": label, "data-k": `finger-${i}`, "data-sfx": "ringOff", ...tip,
         vars: { "--gem": ring.gem },
         onclick: () => { sel.rings.splice(i, 1); render(); } }, ...content)
       : h("span", { class: `finger-slot${id ? " filled" : ""}`, role: "img", "aria-label": label,
@@ -801,6 +807,7 @@ function myTable(m, stolen, placed, editable, slots, sel, boxed = false) {
           render();
         } : null,
         disabled: !canTap,
+        sound: status === "placed" ? "ringOff" : "ringOn",
       });
     })),
     h("p", { class: "muted tip-hint", text: "Passa sopra un anello (o tienilo premuto) per leggerne l'effetto." }));
@@ -812,7 +819,6 @@ function renderHandPhase(m, sel, wide) {
   const placed = done ? m.myRings : sel.rings;
   const slots = move ? SLOTS[move] : 0;
   const stolen = stolenThisRound(m);
-  const r = m.lastResult && m.lastResult.roundNo === m.roundNo ? m.lastResult : null;
 
   const moves = h("div", { class: "moves", role: "group", "aria-label": "Mossa" },
     MOVES.map((mv) => h("button", {
@@ -821,6 +827,7 @@ function renderHandPhase(m, sel, wide) {
       disabled: done,
       "aria-pressed": move === mv ? "true" : "false",
       "data-k": `move-${mv}`,
+      "data-sfx": "select",
       onclick: () => {
         sel.move = mv;
         sel.rings = sel.rings.slice(0, SLOTS[mv]); // keep the rings that still fit
@@ -835,7 +842,7 @@ function renderHandPhase(m, sel, wide) {
       h("p", { class: "status waiting", "aria-live": "polite",
         text: m.oppSubmitted ? `${state.oppName} ha confermato: apertura delle buste…` : `Mossa confermata. In attesa di ${state.oppName}…` }))
     : h("div", { class: "confirm-area sticky-bar" },
-      h("button", { class: "btn btn-big", type: "button", text: "Conferma mossa", "data-k": "hand-confirm",
+      h("button", { class: "btn btn-big", type: "button", text: "Conferma mossa", "data-k": "hand-confirm", "data-sfx": "confirm",
         disabled: !move, onclick: confirmHand }),
       h("p", { class: "speed-hint", text: m.oppSubmitted
         ? `${state.oppName} ha già confermato: i suoi anelli si applicheranno prima dei tuoi.`
@@ -846,16 +853,13 @@ function renderHandPhase(m, sel, wide) {
     : h("p", { class: "muted", text: `Chi perde subisce i danni della mossa vincente. Pareggio: ${dmgText(DRAW_DAMAGE)} a testa.` });
   const mine = myTable(m, stolen, placed, !done && !!move, slots, sel, wide);
   const opp = oppTable(m, stolen, wide);
-  const oppDeck = deckView(m.deck.opp, `Anelli di ${state.oppName}`, "oppDeckOpen");
 
   if (!wide) {
     return [
       scoreboard(m),
       hpPanel(m),
-      r ? resultPanel(r) : null,
       opp,
       h("section", { class: "card stack play" }, playTitle, moves, hand, mine, confirmArea),
-      oppDeck,
     ];
   }
   // Wide screens: a tavern table in three columns (you | the play | the opponent).
@@ -864,9 +868,8 @@ function renderHandPhase(m, sel, wide) {
     h("div", { class: "col col-me" }, h("div", { class: "hp-panel" }, hp.me), mine),
     h("div", { class: "col col-center" },
       scoreboard(m),
-      h("section", { class: "card stack play" }, playTitle, moves, hand, confirmArea),
-      r ? resultPanel(r, { log: false }) : null),
-    h("div", { class: "col col-opp" }, h("div", { class: "hp-panel" }, hp.opp), opp, r ? logCard(r) : null, oppDeck))];
+      h("section", { class: "card stack play" }, playTitle, moves, hand, confirmArea)),
+    h("div", { class: "col col-opp" }, h("div", { class: "hp-panel" }, hp.opp), opp))];
 }
 
 // ---------- hand result ----------
@@ -932,31 +935,21 @@ function stealList(r) {
   return extras.length ? h("ul", { class: "steal-list" }, extras) : null;
 }
 
-// Ring log of the last hand as its own card (wide layout, right column).
-function logCard(r) {
-  return h("section", { class: "card stack log-card", "aria-label": "Anelli dell'ultima mano" },
-    h("h3", { text: `Anelli in ordine di applicazione (${r.log.length})` }),
-    ringLogList(r),
-    stealList(r));
-}
-
-function resultPanel(r, { final = false, log = true } = {}) {
-  const fresh = r !== animatedResult;
-  animatedResult = r;
+function resultPanel(r, { final = false } = {}) {
   const [cls, head] = outcomeHead(r);
   const speed = r.first === "me"
     ? "Sei stato più veloce: i tuoi anelli si applicano per primi"
     : `${state.oppName} è stato più veloce: i suoi anelli si applicano per primi`;
-  return h("section", { class: `card result ${cls}${r.roundEnded ? " round-ended" : ""}${fresh ? " pop" : ""}`, "aria-live": "polite", "aria-label": "Risultato della mano" },
+  return h("section", { class: `card result ${cls}${r.roundEnded ? " round-ended" : ""}`, "aria-label": "Ultima mano" },
     r.roundEnded ? h("h2", { class: `round-end-title ${r.roundWinner}`, text: roundEndText(r) }) : null,
     h("p", { class: "result-kicker", text: `Round ${r.roundNo} · Mano ${r.handInRound}${final ? " · ultima mano" : ""}` }),
     h("p", { class: "result-head", text: head }),
     h("div", { class: "result-moves" }, moveSide("me", r.me, r.ringsMe), h("span", { class: "result-vs", text: "vs" }), moveSide("opp", r.opp, r.ringsOpp)),
     h("p", { class: `speed-line ${r.first}`, text: speed }),
-    log ? h("details", { class: "log-details", open: state.ui.logOpen, ontoggle: (e) => { state.ui.logOpen = e.target.open; } },
+    h("details", { class: "log-details", open: state.ui.logOpen, ontoggle: (e) => { state.ui.logOpen = e.target.open; } },
       h("summary", {}, `Anelli in ordine di applicazione (${r.log.length})`),
       ringLogList(r),
-      stealList(r)) : null,
+      stealList(r)),
     damageTable(r));
 }
 
@@ -973,10 +966,11 @@ function showRoundEnd(m) {
 function renderRoundEnd(m) {
   const r = m.lastResult;
   return [
-    resultPanel(r),
+    h("section", { class: `card result round-ended ${outcomeHead(r)[0]}` },
+      h("h2", { class: `round-end-title ${r.roundWinner}`, text: roundEndText(r) })),
     h("button", { class: "btn btn-big", type: "button", "data-k": "round-next", text: `Avanti: Round ${m.roundNo}`,
       onclick: () => { state.roundAck = roundEndKey(r); render(); } }),
-    h("p", { class: "muted", text: "HP di nuovo a 20, nuovo d10 e nuovo tavolo: tutti gli anelli tornano attivi." }),
+    h("p", { class: "muted", text: `HP di nuovo a ${MAX_HP}, nuovo d10 e nuovo tavolo: tutti gli anelli tornano attivi.` }),
   ];
 }
 
@@ -1054,7 +1048,6 @@ function renderEnd() {
       h("p", { class: "muted", text: "Si riparte quando lo chiedete entrambi. Se uno dei due vuole cambiare, entrambi rifate la scelta degli anelli." })),
     m.lastResult ? hpPanel(m, true) : null,
     m.lastResult && !m.cheated ? resultPanel(m.lastResult, { final: true }) : null,
-    deckView(m.deck.opp, `Anelli di ${state.oppName}`, "oppDeckOpen"),
     deckView(m.deck.me, "I tuoi anelli", "myDeckOpen"),
     h("button", { class: "btn btn-secondary", type: "button", text: "Esci", onclick: () => goHome() }),
   ];
@@ -1067,6 +1060,326 @@ function renderDisconnected() {
       h("h2", { text: "Avversario disconnesso" }),
       h("button", { class: "btn", type: "button", text: "Torna alla home", onclick: () => goHome() })),
   ];
+}
+
+// ---------- sounds tied to state transitions ----------
+
+const snd = { screen: null, err: "", key: null, oppSub: false, phase: null };
+
+function soundTransitions(m) {
+  const scr = state.screen;
+  if (snd.screen && scr !== snd.screen) {
+    if (scr === "game" && (snd.screen === "lobby" || snd.screen === "joining")) sfx("joined");
+    else if (scr === "disconnected") sfx("disconnect");
+  }
+  if (state.error && state.error !== snd.err) sfx("error");
+  snd.screen = scr;
+  snd.err = state.error;
+  if (scr !== "game" || !m) {
+    snd.key = snd.phase = null;
+    return;
+  }
+  const key = `${gen}:${m.phase}:${m.roundNo}:${m.hand}`;
+  if (key === snd.key && m.oppSubmitted && !snd.oppSub) sfx("oppConfirm");
+  if (m.phase === "hand" && snd.phase === "table") sfx("tableReveal");
+  snd.key = key;
+  snd.oppSub = !!m.oppSubmitted;
+  snd.phase = m.phase;
+}
+
+// ---------- hand breakdown overlay (local to this client, outside #app) ----------
+// After a hand resolves, a modal replays it step by step in application order: the clash with the
+// base damage, then each ring (with its delta), then the resulting HP. Deltas are read from the
+// engine's log notes (they carry the numbers); the last step always shows the engine's final values.
+// The Match keeps receiving messages meanwhile: the overlay only covers the board.
+
+const STEP_MS = 650;
+const CLASH_MS = 950;
+const bd = { el: null, result: null, match: null, steps: null, i: 0, timer: null, seen: null, prev: null };
+const OTHER_SIDE = { me: "opp", opp: "me" };
+const lastNum = (s) => { const x = String(s).match(/(\d+)(?!.*\d)/); return x ? Number(x[1]) : 0; };
+
+// Applies one log entry to the running {dmg, heal}; returns the chips to show and the step sound.
+function applyLogEntry(e, cur) {
+  const self = e.owner;
+  const other = OTHER_SIDE[self];
+  const note = e.note || "";
+  const chips = [];
+  const add = (side, n) => {
+    cur.dmg[side] += n;
+    chips.push({ text: `+${n} ⚔`, kind: side === other ? "bonus" : "hurt", target: side });
+  };
+  const shield = (to) => {
+    const n = cur.dmg[self] - to;
+    cur.dmg[self] = to;
+    chips.push({ text: n > 0 ? `−${n} 🛡` : "0 🛡", kind: "shield", target: self });
+  };
+  if (e.cancelled) chips.push({ text: "annullato", kind: "cancel", target: self });
+  else if (note === "nessun effetto") chips.push({ text: "nessun effetto", kind: "none", target: self });
+  else {
+    switch (e.id) {
+      case "ferro": shield(Math.max(0, cur.dmg[self] - lastNum(note))); break;
+      case "nebbia": shield(lastNum(note)); break;
+      case "pace": case "montagna": shield(0); break;
+      case "vampiro": case "guaritore": {
+        const n = lastNum(note);
+        cur.heal[self] += n;
+        chips.push({ text: `+${n} ❤`, kind: "heal", target: self });
+        break;
+      }
+      case "doppio-taglio": {
+        const side = /subiti/.test(note) ? self : other;
+        cur.dmg[side] = lastNum(note);
+        chips.push({ text: "×2 ⚔", kind: side === other ? "bonus" : "hurt", target: side });
+        break;
+      }
+      case "tuono": add(/subito/.test(note) ? self : other, lastNum(note)); break;
+      case "sacrificio": add(self, 2); if (/\+4 danni$/.test(note)) add(other, 4); break;
+      case "sorte": {
+        const n = lastNum(note);
+        chips.push({ text: `🎲 ${n}`, kind: "none", target: self });
+        add(other, n);
+        break;
+      }
+      case "ladro": chips.push({ text: "rubato", kind: "steal", target: other }); break;
+      case "fenice": chips.push({ text: "resti a 1 HP", kind: "heal", target: self }); break;
+      case "ombra": chips.push({ text: "anelli annullati", kind: "cancel-other", target: other }); break;
+      default: add(other, lastNum(note));
+    }
+  }
+  const main = chips.find((c) => c.kind !== "none") ?? chips[0];
+  const sound = { bonus: "bonus", hurt: "hurtSelf", shield: "shield", heal: "heal", cancel: "cancel", "cancel-other": "cancel", steal: "steal" }[main.kind] ?? "none";
+  return { chips, sound };
+}
+
+function buildSteps(r) {
+  const cur = { dmg: { me: r.baseDmgMe, opp: r.baseDmgOpp }, heal: { me: 0, opp: 0 } };
+  const snap = () => ({ dmg: { ...cur.dmg }, heal: { ...cur.heal } });
+  const steps = [{ kind: "clash", ...snap() }];
+  r.log.forEach((e, idx) => {
+    const eff = applyLogEntry(e, cur);
+    steps.push({ kind: "ring", entry: e, idx, ...eff, ...snap() });
+  });
+  steps.push({ kind: "final", dmg: { me: r.dmgMe, opp: r.dmgOpp }, heal: { me: r.healMe, opp: r.healOpp } });
+  return steps;
+}
+
+const hpBefore = (r, side) => (side === "me" ? r.hpBeforeMe : r.hpBeforeOpp);
+function hpAt(r, st, side) {
+  if (st.kind === "final") return side === "me" ? r.hpMe : r.hpOpp;
+  return Math.min(MAX_HP, Math.max(0, hpBefore(r, side) - st.dmg[side] + st.heal[side]));
+}
+
+function syncBreakdown(m) {
+  if (state.screen !== "game" || !m) return closeBreakdown();
+  const r = m.lastResult;
+  if (r && r !== bd.seen) {
+    bd.seen = r;
+    if (!m.cheated) openBreakdown(m, r);
+  } else if (bd.result?.roundEnded && state.roundAck === roundEndKey(bd.result)) {
+    closeBreakdown();
+  }
+}
+
+function openBreakdown(m, r) {
+  closeBreakdown();
+  bd.result = r;
+  bd.match = m;
+  bd.steps = buildSteps(r);
+  bd.prev = null;
+  bd.el = h("div", { class: "bd-overlay", role: "dialog", "aria-modal": "true", "aria-label": `Risultato della mano ${r.handInRound}` });
+  document.body.append(bd.el);
+  showStep(reducedMotion() ? bd.steps.length - 1 : 0);
+}
+
+function closeBreakdown() {
+  clearTimeout(bd.timer);
+  bd.timer = null;
+  bd.el?.remove();
+  bd.el = bd.result = bd.match = bd.steps = bd.prev = null;
+}
+
+function proceedBreakdown() {
+  const r = bd.result;
+  if (r?.roundEnded) state.roundAck = roundEndKey(r);
+  closeBreakdown();
+  render();
+}
+
+function showStep(i) {
+  clearTimeout(bd.timer);
+  bd.timer = null;
+  bd.i = i;
+  const last = i === bd.steps.length - 1;
+  paintBreakdown();
+  stepSound(bd.steps[i]);
+  if (!last) bd.timer = setTimeout(() => showStep(i + 1), i === 0 ? CLASH_MS : STEP_MS);
+}
+
+function stepSound(st) {
+  const r = bd.result;
+  if (st.kind === "clash") return sfx("handReveal");
+  if (st.kind === "ring") return sfx(st.sound);
+  const dMe = r.hpMe - r.hpBeforeMe;
+  const dOpp = r.hpOpp - r.hpBeforeOpp;
+  if (r.roundEnded) sfx(r.roundWinner === "both" ? "doubleKo" : "ko");
+  else if (dMe < 0 || dOpp < 0) sfx("hit");
+  else if (dMe > 0 || dOpp > 0) sfx("heal");
+  else sfx("none");
+  const w = bd.match?.winner;
+  const later = r.matchOver ? (w === "me" ? "matchWon" : "matchLost")
+    : r.roundWinner === "me" ? "roundWon" : r.roundWinner === "opp" ? "roundLost" : null;
+  if (later) setTimeout(() => sfx(later), 550);
+}
+
+function animateIn(el, keyframes, ms = 380) {
+  if (!reducedMotion() && typeof el.animate === "function") el.animate(keyframes, { duration: ms, easing: "cubic-bezier(.2,1.4,.4,1)" });
+}
+const POP = [{ transform: "scale(0.4)", opacity: 0 }, { transform: "scale(1.15)", opacity: 1, offset: 0.6 }, { transform: "scale(1)", opacity: 1 }];
+
+function chipEl(c, big) {
+  const target = c.kind === "none" || c.kind === "cancel" ? null
+    : c.kind === "heal" ? `cura: ${who(c.target)}` : c.kind === "steal" ? `a ${who(c.target)}`
+    : c.kind === "cancel-other" ? `di ${who(c.target)}` : `danni a ${who(c.target)}`;
+  return h("span", { class: `bd-chip ${c.kind}${big ? " big" : ""}` },
+    h("span", { class: "bd-chip-text", text: c.text }),
+    big && target ? h("span", { class: "bd-chip-sub", text: target }) : null);
+}
+
+function bdSide(side, st, r) {
+  const move = side === "me" ? r.me : r.opp;
+  const prev = bd.prev;
+  const hp = hpAt(r, st, side);
+  const prevHp = prev ? prev.hp[side] : hpBefore(r, side);
+  const dmgEl = h("dd", { text: String(st.dmg[side]) });
+  const healEl = h("dd", { text: st.heal[side] ? `+${st.heal[side]}` : "0" });
+  const pct = (hp / MAX_HP) * 100;
+  const level = pct > 50 ? "high" : pct > 25 ? "mid" : "low";
+  const fill = h("div", { class: `hp-fill ${level}` });
+  fill.style.width = `${pct}%`;
+  const el = h("div", { class: `bd-side ${side}` },
+    h("p", { class: "bd-who" },
+      h("span", { class: "bd-name", text: side === "me" ? `Tu · ${state.name}` : state.oppName }),
+      r.first === side ? h("span", { class: "bd-fast", text: "più veloce" }) : null),
+    h("span", { class: "bd-emoji", "aria-hidden": "true", text: EMOJI[move] }),
+    h("p", { class: "bd-move", text: LABEL[move] }),
+    h("dl", { class: "bd-counters" },
+      h("div", { class: "bd-count dmg" }, h("dt", { text: "Danni" }), dmgEl),
+      h("div", { class: "bd-count heal" }, h("dt", { text: "Cure" }), healEl)),
+    h("div", { class: "bd-vial" },
+      h("div", { class: "hp-track", role: "meter", "aria-valuemin": "0", "aria-valuemax": String(MAX_HP),
+        "aria-valuenow": String(hp), "aria-label": `HP di ${who(side)}` }, fill),
+      h("p", { class: "bd-hp" }, `HP ${hpBefore(r, side)} → `, h("strong", { text: String(hp) }))));
+  if (prev) {
+    if (prev.dmg[side] !== st.dmg[side]) animateIn(dmgEl, POP), dmgEl.classList.add("changed");
+    if (prev.heal[side] !== st.heal[side]) animateIn(healEl, POP), healEl.classList.add("changed");
+  }
+  if (prevHp !== hp && !reducedMotion() && typeof fill.animate === "function") {
+    fill.animate([{ width: `${(prevHp / MAX_HP) * 100}%` }, { width: `${pct}%` }], { duration: 450, easing: "ease-out" });
+    if (hp < prevHp) el.animate(SHAKE, { duration: 380 });
+  }
+  return el;
+}
+
+function bdCenter(st, r) {
+  if (st.kind === "clash") {
+    const [cls, head] = outcomeHead(r);
+    const why = r.outcome === 0 ? `Pareggio: ${dmgText(DRAW_DAMAGE)} a testa`
+      : r.outcome === 1 ? `${LABEL[r.me]} batte ${LABEL[r.opp]}: ${dmgText(DAMAGE[r.me])} a ${state.oppName}`
+      : `${LABEL[r.opp]} batte ${LABEL[r.me]}: ${dmgText(DAMAGE[r.opp])} a te`;
+    const el = h("div", { class: `bd-center clash ${cls}` },
+      h("span", { class: "bd-vs", "aria-hidden": "true", text: "vs" }),
+      h("p", { class: "bd-head", text: head }),
+      h("p", { class: "bd-why", text: why }),
+      h("p", { class: "muted", text: r.log.length ? `Ora ${plural(r.log.length, "anello", "anelli")} in ordine di applicazione…` : "Nessun anello in gioco." }));
+    animateIn(el, POP, 450);
+    return el;
+  }
+  if (st.kind === "ring") {
+    const e = st.entry;
+    const ring = RING_BY_ID[e.id];
+    const art = h("span", { class: "bd-ring" }, ringArt(ring));
+    const el = h("div", { class: `bd-center ring ${e.owner}${e.cancelled ? " cancelled" : ""}` },
+      h("p", { class: "bd-step", text: `Anello ${st.idx + 1} di ${r.log.length}` }),
+      art,
+      h("p", { class: "bd-ring-name", text: ring.name }),
+      h("p", { class: `bd-owner ${e.owner}` }, e.owner === "me" ? "Tuo" : `di ${state.oppName}`,
+        r.first === e.owner ? h("span", { class: "bd-fast", text: "più veloce" }) : null),
+      h("div", { class: "bd-chips" }, st.chips.map((c) => chipEl(c, true))),
+      e.note !== "nessun effetto" ? h("p", { class: "bd-note", text: e.cancelled ? `annullato: ${e.note}` : e.note }) : null);
+    animateIn(art, [{ transform: "translateY(-1.5rem) rotate(-20deg) scale(0.6)", opacity: 0 }, { transform: "none", opacity: 1 }], 420);
+    for (const c of el.querySelectorAll(".bd-chip")) animateIn(c, POP, 450);
+    return el;
+  }
+  const [cls, head] = outcomeHead(r);
+  const extra = [];
+  for (const id of r.stolenMe) extra.push(h("li", { text: `${state.oppName} ti ha rubato ${RING_BY_ID[id].icon} ${shortName(id)}` }));
+  for (const id of r.stolenOpp) extra.push(h("li", { text: `Hai rubato ${RING_BY_ID[id].icon} ${shortName(id)} a ${state.oppName}` }));
+  const el = h("div", { class: `bd-center final ${cls}` },
+    r.roundEnded ? h("p", { class: `round-end-title ${r.roundWinner}`, text: roundEndText(r) }) : h("p", { class: "bd-head", text: head }),
+    h("p", { class: "bd-why" }, `Danni finali: Tu ${r.dmgMe} · ${state.oppName} ${r.dmgOpp}`),
+    r.healMe || r.healOpp ? h("p", { class: "bd-why", text: `Cure: Tu +${r.healMe} · ${state.oppName} +${r.healOpp}` }) : null,
+    extra.length ? h("ul", { class: "steal-list" }, extra) : null);
+  animateIn(el, POP, 450);
+  return el;
+}
+
+function bdTrack(r) {
+  if (!r.log.length) return null;
+  const upto = bd.steps[bd.i].kind === "final" ? r.log.length : bd.steps[bd.i].kind === "ring" ? bd.steps[bd.i].idx : -1;
+  return h("ol", { class: "bd-track", "aria-label": "Anelli in ordine di applicazione" }, r.log.map((e, idx) => {
+    const st = bd.steps[idx + 1];
+    const status = idx < upto ? "done" : idx === upto ? "current" : "pending";
+    return h("li", { class: `bd-item ${e.owner} is-${status}${e.cancelled ? " cancelled" : ""}`,
+      "data-ring": e.id, "data-tip": `${e.owner === "me" ? "Tuo" : `Di ${state.oppName}`}\n${e.cancelled ? `annullato: ${e.note}` : e.note}`,
+      tabindex: "0", "aria-label": `${idx + 1}. ${RING_BY_ID[e.id].name} (${who(e.owner)}): ${e.note}` },
+      h("span", { class: "bd-item-no", "aria-hidden": "true", text: String(idx + 1) }),
+      ringArt(RING_BY_ID[e.id]),
+      h("span", { class: "bd-item-name", "aria-hidden": "true", text: shortName(e.id) }),
+      h("span", { class: `owner-tag ${e.owner}`, "aria-hidden": "true", text: e.owner === "me" ? "Tu" : state.oppName }),
+      status !== "pending" ? h("span", { class: "bd-item-chips", "aria-hidden": "true" }, st.chips.map((c) => chipEl(c, false))) : null);
+  }));
+}
+
+function paintBreakdown() {
+  const r = bd.result;
+  const st = bd.steps[bd.i];
+  const last = bd.i === bd.steps.length - 1;
+  const nextText = r.matchOver ? "Vai al resoconto" : r.roundEnded ? `Avanti: Round ${r.roundNo + 1}` : "Prossima mano";
+  const btn = last
+    ? h("button", { class: "btn btn-big", type: "button", "data-sfx": "confirm", text: nextText, onclick: proceedBreakdown })
+    : h("button", { class: "btn btn-secondary btn-small", type: "button", text: "Salta", onclick: () => showStep(bd.steps.length - 1) });
+  const panel = h("section", { class: `card bd-panel ${outcomeHead(r)[0]}` },
+    h("p", { class: "result-kicker", text: `Round ${r.roundNo} · Mano ${r.handInRound}` }),
+    h("div", { class: "bd-arena" }, bdSide("me", st, r), h("div", { class: "bd-mid", "aria-live": "polite" }, bdCenter(st, r)), bdSide("opp", st, r)),
+    bdTrack(r),
+    h("div", { class: "bd-foot" }, btn));
+  bd.el.replaceChildren(panel);
+  bd.prev = { dmg: { ...st.dmg }, heal: { ...st.heal }, hp: { me: hpAt(r, st, "me"), opp: hpAt(r, st, "opp") } };
+  btn.focus({ preventScroll: true });
+}
+
+// ---------- mute toggle (outside #app, next to the rules button) ----------
+
+function setupMute() {
+  const b = h("button", { class: "mute-toggle", type: "button", "data-sfx": "none" });
+  const paint = () => {
+    b.textContent = isMuted() ? "🔇" : "🔊";
+    b.setAttribute("aria-label", isMuted() ? "Attiva i suoni" : "Disattiva i suoni");
+    b.setAttribute("aria-pressed", isMuted() ? "true" : "false");
+    b.title = isMuted() ? "Suoni disattivati" : "Suoni attivi";
+  };
+  b.addEventListener("click", () => { setMuted(!isMuted()); paint(); if (!isMuted()) sfx("click"); });
+  paint();
+  document.body.append(b);
+  // Audio starts on the first gesture (autoplay policy); every button gets its sound.
+  for (const ev of ["pointerdown", "keydown"]) document.addEventListener(ev, unlockAudio, { capture: true, passive: true });
+  document.addEventListener("click", (e) => {
+    unlockAudio();
+    const el = e.target instanceof Element ? e.target.closest("button, summary") : null;
+    if (!el || el.disabled || el === b) return;
+    sfx(el.getAttribute("aria-disabled") === "true" ? "error" : el.dataset.sfx || "click");
+  }, true);
 }
 
 // ---------- rules drawer (outside #app, static content) ----------
@@ -1271,6 +1584,7 @@ function setupTooltip() {
 // ---------- boot ----------
 
 setupRules();
+setupMute();
 setupTooltip();
 const urlCode = readRoomFromUrl();
 if (urlCode) join(urlCode);

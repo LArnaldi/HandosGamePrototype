@@ -1227,6 +1227,118 @@ button.finger-slot:hover .slot-band { filter: brightness(1.1); }
 .stat dd { margin: 0; font-weight: 700; text-align: right; overflow-wrap: anywhere; }
 .rematch-opp { margin: 0; padding: 0.5rem 0.75rem; border-radius: var(--radius-sm); background: var(--opp-soft); font-weight: 800; }
 
+/* ---------- mute toggle: a wooden coin next to the rules seal ---------- */
+.mute-toggle {
+  position: fixed;
+  top: calc(0.6rem + env(safe-area-inset-top, 0px));
+  right: calc(0.6rem + var(--tap) + 0.5rem + env(safe-area-inset-right, 0px));
+  z-index: 30;
+  width: var(--tap);
+  height: var(--tap);
+  border: 0;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, var(--wood-hi), #3a2413 60%, #1c1009);
+  box-shadow: 0 0 0 2px var(--gold-lo), inset 0 2px 3px rgb(255 220 170 / 0.2), inset 0 -3px 5px rgb(0 0 0 / 0.45), 0 3px 8px rgb(0 0 0 / 0.55);
+  font-size: 1.15rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.mute-toggle:hover { filter: brightness(1.15); }
+.mute-toggle[aria-pressed="true"] { filter: grayscale(0.6); }
+
+/* ---------- hand breakdown overlay ---------- */
+.bd-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 15;
+  display: grid;
+  place-items: center;
+  padding: 3.6rem 0.75rem 1rem;
+  overflow-y: auto;
+  background: var(--backdrop);
+  backdrop-filter: blur(2px);
+}
+.bd-panel { width: min(100%, 50rem); display: flex; flex-direction: column; gap: 0.7rem; text-align: center; }
+.bd-panel.win { border: 2px solid var(--moss); }
+.bd-panel.lose { border: 2px solid var(--wax); }
+.bd-panel.draw { border: 2px solid var(--gold-lo); }
+.bd-arena { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) minmax(0, 1fr); gap: 0.6rem; align-items: stretch; }
+.bd-side { display: flex; flex-direction: column; align-items: center; gap: 0.25rem; min-width: 0; padding: 0.5rem 0.4rem; border-radius: var(--radius-sm); background: rgb(0 0 0 / 0.04); }
+.bd-side.me { box-shadow: inset 0 3px 0 var(--me); }
+.bd-side.opp { box-shadow: inset 0 3px 0 var(--opp); }
+.bd-who { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 0.15rem; max-width: 100%; }
+.bd-name { font-weight: 800; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bd-side.me .bd-name { color: var(--me); }
+.bd-side.opp .bd-name { color: var(--opp); }
+.bd-fast { display: inline-block; margin-left: 0.3rem; padding: 0.05rem 0.45rem; border-radius: 999px; background: var(--gold); color: var(--ink); font-family: var(--font-head); font-size: 0.68rem; font-weight: 800; letter-spacing: 0.04em; text-shadow: none; white-space: nowrap; }
+.bd-who .bd-fast { margin-left: 0; }
+.bd-emoji { font-size: 2.6rem; line-height: 1.1; }
+.bd-move { margin: 0; color: var(--muted); font-size: 0.85rem; }
+.bd-counters { display: flex; gap: 0.4rem; margin: 0.2rem 0 0; }
+.bd-count { display: flex; flex-direction: column; align-items: center; min-width: 3.4rem; padding: 0.2rem 0.4rem; border-radius: var(--radius-sm); background: var(--parch-hi, #fbf3df); border: 1px solid var(--border); }
+.bd-count dt { font-size: 0.66rem; font-family: var(--font-head); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.bd-count dd { margin: 0; font-size: 1.45rem; font-weight: 900; line-height: 1.1; }
+.bd-count.dmg dd { color: var(--danger); }
+.bd-count.heal dd { color: var(--success); }
+.bd-count dd.changed { text-shadow: 0 0 10px rgb(201 162 74 / 0.9); }
+.bd-vial { width: 100%; display: flex; flex-direction: column; gap: 0.15rem; margin-top: 0.2rem; }
+.bd-hp { margin: 0; font-size: 0.85rem; }
+.bd-hp strong { font-size: 1.05rem; }
+.bd-mid { display: flex; min-width: 0; }
+.bd-center { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.3rem; min-width: 0; padding: 0.4rem; }
+.bd-vs { color: var(--wax); font-family: var(--font-title); font-size: 2.2rem; font-weight: 900; line-height: 1; }
+.bd-head { margin: 0; font-family: var(--font-head); font-weight: 900; font-size: 1.3rem; }
+.bd-center.win .bd-head { color: var(--success); }
+.bd-center.lose .bd-head { color: var(--danger); }
+.bd-center.draw .bd-head { color: var(--warning); }
+.bd-why { margin: 0; font-weight: 700; }
+.bd-step { margin: 0; color: var(--muted); font-family: var(--font-head); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }
+.bd-ring { display: inline-block; padding: 0.3rem 1rem 0.4rem; border-radius: 50%; background: radial-gradient(ellipse at 50% 60%, rgb(255 200 110 / 0.55), transparent 70%); }
+.bd-ring .rt-ring { transform: scale(1.45); margin: 1.1rem 0.6rem 0.6rem; }
+.bd-center.cancelled .bd-ring { filter: grayscale(0.9) opacity(0.7); }
+.bd-ring-name { margin: 0; font-weight: 800; font-size: 1.05rem; }
+.bd-owner { margin: 0; font-weight: 700; font-size: 0.88rem; }
+.bd-owner.me { color: var(--me); }
+.bd-owner.opp { color: var(--opp); }
+.bd-note { margin: 0; color: var(--muted); font-size: 0.8rem; font-style: italic; overflow-wrap: anywhere; }
+.bd-chips { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.35rem; }
+.bd-chip { display: inline-flex; flex-direction: column; align-items: center; padding: 0.1rem 0.5rem; border-radius: 0.5rem; border: 1px solid rgb(0 0 0 / 0.25); background: var(--parch-2, #efdcb3); color: var(--ink); font-weight: 900; font-size: 0.72rem; line-height: 1.2; text-shadow: none; white-space: nowrap; }
+.bd-chip.big { padding: 0.25rem 0.9rem; font-size: 1.55rem; border-width: 2px; box-shadow: 0 3px 8px rgb(0 0 0 / 0.25); }
+.bd-chip-sub { font-size: 0.72rem; font-weight: 700; opacity: 0.85; }
+.bd-chip.bonus { background: #f7d98a; border-color: var(--gold-lo); color: #6a1a07; }
+.bd-chip.hurt { background: #f6c3b8; border-color: var(--wax); color: var(--wax-lo); }
+.bd-chip.shield { background: #c9d8ec; border-color: var(--sapphire); color: #183a66; }
+.bd-chip.heal { background: #c7e8c4; border-color: var(--moss); color: #1d4d23; }
+.bd-chip.steal { background: #d6dcc0; border-color: #556b2f; color: #2f3d14; }
+.bd-chip.cancel, .bd-chip.cancel-other { background: #ddd6cb; border-color: var(--used); color: #4a443b; }
+.bd-chip.cancel .bd-chip-text { text-decoration: line-through; text-decoration-thickness: 2px; }
+.bd-chip.none { background: transparent; color: var(--muted); font-weight: 700; }
+.bd-track { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.35rem; margin: 0; padding: 0.5rem; list-style: none; border-radius: var(--radius-sm); background: rgb(0 0 0 / 0.05); }
+.bd-item { position: relative; display: flex; flex-direction: column; align-items: center; gap: 0.1rem; width: 5.6rem; padding: 0.2rem 0.2rem 0.35rem; border-radius: var(--radius-sm); border: 2px solid transparent; transition: opacity 0.2s, transform 0.2s; }
+.bd-item .rt-ring { width: 2.9rem; height: 2rem; }
+.bd-item.me { background: rgb(42 90 153 / 0.08); }
+.bd-item.opp { background: rgb(161 76 26 / 0.08); }
+.bd-item.is-pending { opacity: 0.4; filter: grayscale(0.6); }
+.bd-item.is-current { border-color: var(--gold); box-shadow: 0 0 14px rgb(241 212 136 / 0.9); transform: translateY(-3px); }
+.bd-item.cancelled .rt-ring { filter: grayscale(1) opacity(0.6); }
+.bd-item-no { position: absolute; top: 0.1rem; left: 0.3rem; font-family: var(--font-head); font-weight: 800; font-size: 0.72rem; color: var(--muted); }
+.bd-item-name { font-weight: 800; font-size: 0.74rem; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bd-item .owner-tag { font-size: 0.6rem; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bd-item-chips { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.15rem; }
+.bd-foot { display: flex; justify-content: center; }
+.bd-foot .btn-big { max-width: 22rem; }
+@media (max-width: 640px) {
+  .bd-overlay { padding-inline: 0.4rem; place-items: start center; }
+  .bd-panel { padding: 0.75rem 0.6rem; gap: 0.5rem; }
+  .bd-arena { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .bd-mid { grid-column: 1 / -1; grid-row: 1; }
+  .bd-emoji { font-size: 2rem; }
+  .bd-count { min-width: 2.8rem; }
+  .bd-count dd { font-size: 1.2rem; }
+  .bd-chip.big { font-size: 1.3rem; }
+  .bd-item { width: 4.6rem; }
+}
+
 /* ---------- rules: a wax-seal button and an unrolled scroll ---------- */
 .rules-toggle {
   position: fixed;
