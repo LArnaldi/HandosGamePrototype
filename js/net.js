@@ -40,6 +40,29 @@ const ERRORS = {
 };
 const errorText = (type) => ERRORS[type] || "Errore di connessione.";
 
+// TURN relay (Metered Open Relay, free tier) for networks where a direct P2P link fails.
+// The apiKey is a public, fetch-only key; never put the Metered secret key here.
+const TURN_URL = "https://handosgameprototype.metered.live/api/v1/turn/credentials?apiKey=3a5b77a447baa59782e6b6ce8d024e1435b3";
+const ICE_TIMEOUT_MS = 4000;
+let icePromise = null;
+
+// Resolves to PeerJS options with STUN+TURN servers, or undefined (PeerJS defaults) if the
+// fetch fails or is slow. Only runs in browsers; a failure is retried on the next call.
+function peerOptions() {
+  if (typeof window === "undefined" || typeof fetch !== "function") return Promise.resolve(undefined);
+  icePromise ||= Promise.race([
+    fetch(TURN_URL)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((list) => Array.isArray(list) && list.length
+        ? { config: { iceServers: [{ urls: "stun:stun.l.google.com:19302" }, ...list] } }
+        : undefined),
+    new Promise((r) => setTimeout(() => r(undefined), ICE_TIMEOUT_MS)),
+  ])
+    .catch(() => undefined)
+    .then((opts) => { if (!opts) icePromise = null; return opts; });
+  return icePromise;
+}
+
 export function normalizeCode(code) {
   return String(code ?? "").trim().toUpperCase();
 }
@@ -118,9 +141,10 @@ const SIGNALING = new Set(["network", "server-error", "socket-error", "socket-cl
 export function hostRoom(cb = {}) {
   const s = session(cb);
   let tries = 0;
-  const start = () => {
+  const start = () => peerOptions().then((opts) => {
+    if (s.done) return;
     const code = makeRoomCode();
-    const peer = (s.peer = new Peer(ID_PREFIX + code));
+    const peer = (s.peer = new Peer(ID_PREFIX + code, opts));
     peer.on("open", () => { if (!s.done && s.peer === peer) cb.onCode?.(code); });
     peer.on("connection", (conn) => {
       if (s.done) return conn.close();
@@ -142,7 +166,7 @@ export function hostRoom(cb = {}) {
       s.end(err.type);
     });
     s.peerEvents(peer);
-  };
+  });
   start();
   return s.handle;
 }
@@ -155,16 +179,19 @@ export function joinRoom(code, cb = {}) {
     return s.handle;
   }
   const timer = setTimeout(() => { if (!s.connected) s.end("timeout"); }, JOIN_TIMEOUT_MS);
-  const peer = (s.peer = new Peer());
-  peer.on("open", () => {
+  peerOptions().then((opts) => {
     if (s.done) return;
-    s.wire(peer.connect(ID_PREFIX + code, CONN_OPTS), () => { clearTimeout(timer); cb.onOpen?.(); });
+    const peer = (s.peer = opts ? new Peer(opts) : new Peer());
+    peer.on("open", () => {
+      if (s.done) return;
+      s.wire(peer.connect(ID_PREFIX + code, CONN_OPTS), () => { clearTimeout(timer); cb.onOpen?.(); });
+    });
+    peer.on("error", (err) => {
+      if (s.connected && SIGNALING.has(err.type)) return;
+      s.end(err.type);
+    });
+    s.peerEvents(peer);
   });
-  peer.on("error", (err) => {
-    if (s.connected && SIGNALING.has(err.type)) return;
-    s.end(err.type);
-  });
-  s.peerEvents(peer);
   const close = s.close;
   s.close = s.handle.close = s.handle.destroy = () => { clearTimeout(timer); close(); };
   return s.handle;
