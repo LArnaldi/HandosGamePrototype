@@ -68,3 +68,54 @@ The header comment in `js/net.js` has the full details. It uses the global `Peer
   - `send(msg)` returns `true`, or `false` when not connected.
   - `close()` (alias `destroy()`) tears the session down without firing any callback. It also runs automatically on `beforeunload`.
 - `buildInviteLink(code)`, `readRoomFromUrl()` (returns a valid code from `?r=`, or null), `normalizeCode(code)`, `isRoomCode(code)`, `ID_PREFIX`.
+
+## Rings
+
+Design (fixed, decided by the user):
+
+- There are 20 rings. Before the match each player picks 10 of them as their deck (`DECK_SIZE`). Both players may pick the same rings.
+- At the start of each round a shared d10 (1..10) is rolled. Each player secretly chooses exactly that many rings from their deck to put on their table. The tables are revealed at the same time, and both players see each other's table.
+- In each hand, besides the move, a player places rings from their own table on the extended fingers of the move: `SLOTS = {sasso: 0, carta: 5, forbice: 2}`. Fingers are ordered left to right. A ring used in a hand is disabled until the next round (new d10, new table).
+- Damage model: the hand starts from the base damage pools (the loser takes `DAMAGE[winning move]`, the winner takes 0; on a draw both take `DRAW_DAMAGE`) and heal pools at 0. Then the rings apply, one at a time, and each one changes the pools at the moment it applies, so order matters. Damage pools never go below 0. "Win", "lose" and "draw" are from the ring owner's point of view. At the end, `hpAfter = clamp(hp − dmg + heal, 0, MAX_HP)`.
+- Application order: the rings of the player who confirmed their full move first ("faster") apply first, left to right. Then the slower player's rings apply, left to right. There are two exceptions:
+  - Ombra is a pre-pass. If the faster player has Ombra, all of the slower player's rings are cancelled this hand, including their Ombra. If only the slower player has Ombra, all of the faster player's rings are cancelled. Cancelled rings still count as used.
+  - Fenice is checked at the very end. If its (uncancelled) owner would end the hand at 0 HP, they stay at 1.
+
+| # | id | Name | Effect |
+|---|----|------|--------|
+| 1 | `gigante` | Anello del Gigante | If you win: +1 damage for each other uncancelled ring on your fingers this hand. |
+| 2 | `scriba` | Anello dello Scriba | +2 damage if you win with Carta. |
+| 3 | `lama` | Anello della Lama | +2 damage if you win with Forbice. |
+| 4 | `ferro` | Anello di Ferro | You take 2 less damage (current pool, min 0). |
+| 5 | `nebbia` | Anello della Nebbia | If you lose, your pool becomes min(current, 1). |
+| 6 | `specchio` | Anello dello Specchio | If you lose, the opponent's pool += floor(your current pool / 2). |
+| 7 | `vampiro` | Anello del Vampiro | If you win, heal 2. |
+| 8 | `guaritore` | Anello del Guaritore | Heal 3, whatever the outcome. |
+| 9 | `fenice` | Anello della Fenice | If this hand would bring you to 0 HP, you stay at 1 (end check). |
+| 10 | `pace` | Anello della Pace | On a draw your pool becomes 0. |
+| 11 | `caos` | Anello del Caos | On a draw the opponent's pool += 2. |
+| 12 | `tuono` | Anello del Tuono | If you win: +3 damage. If you lose: +1 to your own pool. |
+| 13 | `doppio-taglio` | Anello del Doppio Taglio | If you win, the opponent's pool ×2. If you lose, your pool ×2. |
+| 14 | `rabbia` | Anello della Rabbia | If you win: +floor((MAX_HP − your HP at start of hand) / 5) damage. |
+| 15 | `tramonto` | Anello del Tramonto | +4 damage if you win and your HP at start of hand is ≤ 10. |
+| 16 | `sacrificio` | Anello del Sacrificio | Your pool += 2 always. If you win, the opponent's pool += 4. |
+| 17 | `sorte` | Anello della Sorte | If you win: +1d6 damage (rng). |
+| 18 | `ombra` | Anello dell'Ombra | Cancels all the opponent's rings this hand (pre-pass). |
+| 19 | `ladro` | Anello del Ladro | If you win: disable one random still-active ring on the opponent's table. |
+| 20 | `montagna` | Anello della Montagna | If the opponent won with Sasso, your pool becomes 0. |
+
+## API: `js/rings.js`
+
+Pure logic (no DOM, no network), importable in Node. `tests/rings.test.mjs` covers it. It imports `DAMAGE`, `DRAW_DAMAGE`, `MAX_HP` and `outcome` from `js/game.js`. It is not wired into `Match` or the UI yet.
+
+- Constants: `SLOTS`, `DECK_SIZE` (10), `RINGS` (20 × `{id, name, gem, icon, text}`: the id is a stable kebab slug, `gem` is a CSS color, `icon` is an emoji and `text` is short Italian rules text), `RING_BY_ID`.
+- `validatePlacement(move, ringIds, activeTable)` returns a bool. It checks that `ringIds.length ≤ SLOTS[move]`, that there are no duplicates, and that every id is a known ring in `activeTable`.
+- `resolveHand({moves:{me,opp}, rings:{me,opp}, first, hp:{me,opp}, myActiveTable, oppActiveTable, rng})`:
+  - `rings.*` are ring ids in finger order. `first` is `"me"` or `"opp"` (the faster player). `hp` is the HP at the start of the hand. `*ActiveTable` are the rings still active on each table after removing the ones used this hand. `rng()` returns floats in [0, 1).
+  - It returns `{dmg, heal, hpAfter, outcome, log, stolen}`.
+    - `dmg` and `heal` are the final pools, `{me, opp}`. `hpAfter` is clamped to 0..MAX_HP with Fenice applied. `outcome` is 1, 0 or -1 from "me".
+    - `log` is `[{owner, id, cancelled, note}]` in application order. `note` is short Italian text such as "+2 danni", "nessun effetto" or "annullato dall'Ombra".
+    - `stolen.me` holds my ring ids that the opponent's Ladro disabled. `stolen.opp` holds the opponent's ids that my Ladro disabled.
+  - Randomness: Sorte rolls `1 + floor(rng() * 6)`. Ladro picks index `floor(rng() * n)` from the victim's active table sorted by id. rng is called only when the effect triggers (a win, and a non-empty table for Ladro), in application order (faster player first). So both clients, each computing from its own view with the same rng sequence, get mirrored identical results. The mirror property is tested on 2000 random scenarios.
+  - It throws on an invalid move, an invalid `first`, or an unknown ring id.
+- `makeRng(seedHexOrBytes)` returns a deterministic PRNG (mulberry32 seeded by FNV-1a over up to 32 seed bytes). The seed can be a hex string or a byte array, and both forms give the same stream for the same bytes.
