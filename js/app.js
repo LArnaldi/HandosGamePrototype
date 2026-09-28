@@ -91,7 +91,7 @@ function send(msg) {
 }
 
 // Match.pick() sets myHash when hashing finishes, possibly while earlier queued tasks are still
-// running; only reveal once our own commit for this round has actually been sent, so a reveal
+// running; only reveal once our own commit for this hand has actually been sent, so a reveal
 // can never overtake our commit on the wire.
 let sentHash = null; // hash of the last commit sent (salted, so unique per pick)
 
@@ -195,13 +195,13 @@ function handleMessage(msg) {
         state.oppName = cleanName(msg.name, DEFAULT_OPP);
         break;
       case "commit":
-        if (!isInt(msg.round) || typeof msg.hash !== "string" || !/^[0-9a-f]{64}$/.test(msg.hash)) return;
-        m.receiveCommit({ t: "commit", round: msg.round, hash: msg.hash });
+        if (!isInt(msg.hand) || typeof msg.hash !== "string" || !/^[0-9a-f]{64}$/.test(msg.hash)) return;
+        m.receiveCommit({ t: "commit", hand: msg.hand, hash: msg.hash });
         maybeReveal(m);
         break;
       case "reveal":
-        if (!isInt(msg.round) || typeof msg.move !== "string" || typeof msg.salt !== "string") return;
-        await m.receiveReveal({ t: "reveal", round: msg.round, move: msg.move, salt: msg.salt });
+        if (!isInt(msg.hand) || typeof msg.move !== "string" || typeof msg.salt !== "string") return;
+        await m.receiveReveal({ t: "reveal", hand: msg.hand, move: msg.move, salt: msg.salt });
         break;
       case "rematch":
         m.receiveRematch();
@@ -409,20 +409,30 @@ function hpPanel(m) {
     hpAnim = { result: r, start: reducedMotion() ? -Infinity : performance.now() };
   }
   const elapsed = r ? performance.now() - hpAnim.start : Infinity;
-  const prev = m.history.at(-2); // lastResult is history.at(-1)
+  let prev = m.history.at(-2); // lastResult is history.at(-1)
+  if (prev && prev.roundNo !== r.roundNo) prev = null; // first hand of a round starts from full HP
+  // Right after a KO, keep showing the pre-reset HP until the next hand is picked.
+  const showKo = r?.roundEnded && !m.myMove;
+  const hpMe = showKo ? r.hpMe : m.hp.me;
+  const hpOpp = showKo ? r.hpOpp : m.hp.opp;
+  const fresh = showKo || r?.roundNo === m.roundNo;
   return h("div", { class: "hp-panel" },
     hpBar("me", "I tuoi HP", [h("span", { class: "hp-tag", text: "Tu" }), state.name],
-      m.hp.me, prev?.hpMe ?? MAX_HP, r?.dmgMe ?? 0, elapsed),
+      hpMe, prev?.hpMe ?? MAX_HP, fresh ? r?.dmgMe ?? 0 : 0, elapsed),
     hpBar("opp", `HP di ${state.oppName}`, [state.oppName],
-      m.hp.opp, prev?.hpOpp ?? MAX_HP, r?.dmgOpp ?? 0, elapsed));
+      hpOpp, prev?.hpOpp ?? MAX_HP, fresh ? r?.dmgOpp ?? 0 : 0, elapsed));
 }
 
 function revealCard(r) {
   const fresh = r !== animatedResult;
   animatedResult = r;
-  const [text, cls] = r.outcome === 1 ? [`Hai vinto il round! −${r.dmgOpp} HP all'avversario`, "win"]
-    : r.outcome === -1 ? [`Hai perso il round: −${r.dmgMe} HP`, "lose"]
+  let [text, cls] = r.outcome === 1 ? [`Hai vinto la mano! −${r.dmgOpp} HP all'avversario`, "win"]
+    : r.outcome === -1 ? [`Hai perso la mano: −${r.dmgMe} HP`, "lose"]
     : [`Pareggio: −${r.dmgMe} HP a testa`, "draw"];
+  if (r.roundEnded) {
+    const rw = r.roundWinner === "me" ? "Round vinto!" : r.roundWinner === "opp" ? "Round perso." : "Doppio KO: un punto a testa!";
+    text += ` · ${rw} Punti ${r.pointsMe}–${r.pointsOpp}`;
+  }
   const side = (who, move) => h("div", { class: "reveal-side" },
     h("span", { class: "reveal-emoji", text: EMOJI[move], "aria-label": LABEL[move] }),
     h("span", { class: "reveal-who", text: who }));
@@ -456,7 +466,8 @@ function renderGame() {
 
   return [
     hpPanel(m),
-    h("p", { class: "round-info" }, h("strong", { text: `Round ${m.round}` })),
+    h("p", { class: "round-info" }, h("strong", { text: `Round ${m.roundNo} · Mano ${m.handInRound}` }),
+      ` · Punti: Tu ${m.points.me} – ${m.points.opp} ${state.oppName}`),
     !picked && m.lastResult ? revealCard(m.lastResult) : null,
     hands,
     h("p", { class: "rules", text: `Pareggio: −${DRAW_DAMAGE} HP a testa` }),
@@ -468,19 +479,18 @@ function renderGame() {
 function renderEnd() {
   const m = state.match;
   const won = m.winner === "me";
-  const draw = m.winner === "draw";
   const endKey = m.lastResult ?? m;
   const freshEnd = endKey !== animatedEnd;
   animatedEnd = endKey;
-  const headline = m.cheated ? "L'avversario ha barato — vinci a tavolino" : won ? "Hai vinto!" : draw ? "Pareggio!" : "Hai perso";
+  const headline = m.cheated ? "L'avversario ha barato — vinci a tavolino" : won ? "Hai vinto!" : "Hai perso";
   let rematchInfo = null;
   if (m.iWantRematch) rematchInfo = `In attesa che ${state.oppName} accetti…`;
   else if (m.oppWantsRematch) rematchInfo = `${state.oppName} vuole la rivincita!`;
   return [
-    h("section", { class: `card end ${won ? "win" : draw ? "draw" : "lose"}${freshEnd ? " pop" : ""}` },
-      h("p", { class: "end-emoji", text: m.cheated ? "🚩" : won ? "🏆" : draw ? "🤝" : "😔", "aria-hidden": "true" }),
+    h("section", { class: `card end ${won ? "win" : "lose"}${freshEnd ? " pop" : ""}` },
+      h("p", { class: "end-emoji", text: m.cheated ? "🚩" : won ? "🏆" : "😔", "aria-hidden": "true" }),
       h("h2", { class: "end-title", text: headline }),
-      h("p", { class: "end-score", text: `HP finali · Tu ${m.hp.me} – ${m.hp.opp} ${state.oppName}` })),
+      h("p", { class: "end-score", text: `Round vinti · Tu ${m.points.me} – ${m.points.opp} ${state.oppName}` })),
     hpPanel(m),
     m.lastResult && !m.cheated ? revealCard(m.lastResult) : null,
     rematchInfo ? h("p", { class: "status", "aria-live": "polite", text: rematchInfo }) : null,
