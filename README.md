@@ -18,7 +18,8 @@ Poi apri http://localhost:8000
 
 1. Premi "Crea partita" e invia il link (o il codice di 5 lettere) al tuo amico.
 2. Ognuno sceglie Sasso, Carta o Forbice: le mosse restano in busta chiusa finché entrambi hanno scelto, così nessuno può sbirciare.
-3. Vince chi arriva per primo a 3 round vinti (i pareggi non contano). Alla fine potete chiedere la rivincita.
+3. Ognuno parte con 20 HP. Chi perde il round perde HP in base alla mossa vincente: Sasso toglie 5 HP, Carta 3, Forbice 1. In caso di pareggio entrambi perdono 1 HP.
+4. Chi arriva a 0 HP perde. Se entrambi arrivano a 0 nello stesso round, la partita finisce in pareggio. Alla fine potete chiedere la rivincita: si riparte da 20 HP a testa.
 
 ## Pubblicare gratis su GitHub Pages
 

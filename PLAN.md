@@ -30,7 +30,7 @@ The header comment in `js/game.js` has the full details. Run the tests with `nod
 - Constants: `MOVES`, `EMOJI`, `LABEL`, `MAX_HP` (20), `DAMAGE` (`{sasso:5, carta:3, forbice:1}`, keyed by the winning move), `DRAW_DAMAGE` (1), `ROOM_ALPHABET`.
 - Functions: `isMove(x)`, `outcome(a, b)` (returns 1, -1 or 0), `makeSalt()`, `makeRoomCode()`, `async commitHash(round, move, salt)`, `async verifyReveal(hash, round, move, salt)`.
 - `new Match()`
-  - State fields: `round`, `hp {me, opp}`, `winner` (null, "me", "opp" or "draw"), `cheated`, `lastResult {round, me, opp, outcome, dmgMe, dmgOpp, hpMe, hpOpp}` (`dmg*` is HP lost that round, `hp*` is HP after it), `history`, `iWantRematch`, `oppWantsRematch`.
+  - State fields: `round`, `hp {me, opp}`, `winner` (null, "me", "opp" or "draw"), `cheated`, `lastResult {round, me, opp, outcome, dmgMe, dmgOpp, hpMe, hpOpp}` (`dmg*` is the damage dealt that round, before HP is floored at 0; `hp*` is HP after it), `history`, `iWantRematch`, `oppWantsRematch`.
   - `async pick(move)` returns a `{t:"commit", round, hash}` message, or null when the pick isn't allowed.
   - `receiveCommit(msg)` stores the opponent's commit. A commit for round+1 that arrives early is buffered.
   - `revealReady()` and `takeReveal()`: after every `pick()` or `receiveCommit()`, check `if (m.revealReady()) send(m.takeReveal())`. `takeReveal()` resolves the round itself if the opponent's reveal already arrived, so re-render afterwards.

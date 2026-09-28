@@ -370,7 +370,7 @@ const SHAKE = [
   { transform: "translateX(-4px)" }, { transform: "translateX(2px)" }, { transform: "translateX(0)" },
 ];
 
-function hpBar(side, label, nameParts, hp, dmg, elapsed) {
+function hpBar(side, label, nameParts, hp, prevHp, dmg, elapsed) {
   const pct = (hp / MAX_HP) * 100;
   const level = pct > 50 ? "high" : pct > 25 ? "mid" : "low";
   const fill = h("div", { class: `hp-fill ${level}` });
@@ -388,7 +388,7 @@ function hpBar(side, label, nameParts, hp, dmg, elapsed) {
     h("div", { class: "hp-head" }, h("span", { class: "hp-name" }, ...nameParts), num),
     track);
   if (dmg > 0 && elapsed < HP_FLOAT_MS) {
-    const from = Math.min(100, ((hp + dmg) / MAX_HP) * 100);
+    const from = (prevHp / MAX_HP) * 100; // HP before the hit (damage past 0 is not shown)
     playFrom(fill, [{ width: `${from}%` }, { width: `${pct}%` }], HP_FILL_MS, elapsed);
     playFrom(bar, SHAKE, HP_SHAKE_MS, elapsed, "linear");
     const float = h("span", { class: "hp-float", text: `−${dmg}`, "aria-hidden": "true" });
@@ -409,9 +409,12 @@ function hpPanel(m) {
     hpAnim = { result: r, start: reducedMotion() ? -Infinity : performance.now() };
   }
   const elapsed = r ? performance.now() - hpAnim.start : Infinity;
+  const prev = m.history.at(-2); // lastResult is history.at(-1)
   return h("div", { class: "hp-panel" },
-    hpBar("me", "I tuoi HP", [h("span", { class: "hp-tag", text: "Tu" }), state.name], m.hp.me, r?.dmgMe ?? 0, elapsed),
-    hpBar("opp", `HP di ${state.oppName}`, [state.oppName], m.hp.opp, r?.dmgOpp ?? 0, elapsed));
+    hpBar("me", "I tuoi HP", [h("span", { class: "hp-tag", text: "Tu" }), state.name],
+      m.hp.me, prev?.hpMe ?? MAX_HP, r?.dmgMe ?? 0, elapsed),
+    hpBar("opp", `HP di ${state.oppName}`, [state.oppName],
+      m.hp.opp, prev?.hpOpp ?? MAX_HP, r?.dmgOpp ?? 0, elapsed));
 }
 
 function revealCard(r) {
@@ -433,6 +436,7 @@ function revealCard(r) {
 
 function renderGame() {
   const m = state.match;
+  animatedEnd = null; // a match is in progress, so the next end screen is a new one (even after a rematch)
   const picked = m.myMove;
   const hands = h("div", { class: "hands" },
     MOVES.map((mv) => h("button", {

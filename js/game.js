@@ -12,8 +12,8 @@
 //     rules: both start at MAX_HP. The round loser loses DAMAGE[winning move] HP; on a draw both
 //            lose DRAW_DAMAGE. HP floors at 0; a player at 0 loses. Both at 0 together -> "draw".
 //     state: round, hp {me, opp}, winner (null|"me"|"opp"|"draw"), cheated, lastResult
-//            ({round, me, opp, outcome, dmgMe, dmgOpp, hpMe, hpOpp}; dmg* = HP lost this round,
-//            hp* = HP after it), history [lastResult...], iWantRematch, oppWantsRematch
+//            ({round, me, opp, outcome, dmgMe, dmgOpp, hpMe, hpOpp}; dmg* = damage dealt this
+//            round, before the 0 floor; hp* = HP after it), history [lastResult...], iWantRematch, oppWantsRematch
 //     async pick(move)       -> {t:"commit", round, hash} | null (invalid / already picked / match over)
 //     receiveCommit(msg)     -> stores opponent hash (current round; next round is buffered)
 //     revealReady()          -> true when both commits known and our reveal not yet sent
