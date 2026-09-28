@@ -36,3 +36,25 @@ The header comment in `js/game.js` has the full details. Run the tests with `nod
   - `revealReady()` and `takeReveal()`: after every `pick()` or `receiveCommit()`, check `if (m.revealReady()) send(m.takeReveal())`. `takeReveal()` resolves the round itself if the opponent's reveal already arrived, so re-render afterwards.
   - `async receiveReveal(msg)` returns `{resolved, cheated}`. If `cheated` is true, the match is over with `winner="me"`.
   - `requestRematch()` returns `{t:"rematch"}`, or null. It works only after the match is over. `receiveRematch()` returns true when it causes a reset. A reset to a fresh match happens as soon as both players want a rematch.
+
+## API: `js/net.js`
+
+The header comment in `js/net.js` has the full details. It uses the global `Peer` (PeerJS 1.5.4 from unpkg), but only when a function is called, never at import time. `tests/net.test.mjs` exercises it with a fake `Peer`.
+
+- `hostRoom({onCode, onOpponent, onMessage, onClose, onError})` returns a handle.
+  - It registers the peer id `"handos-proto-" + code`. If the id is taken (`'unavailable-id'`), it picks a new code, up to 5 attempts.
+  - `onCode(code)` fires once the peer is registered. `onOpponent()` fires when the first guest's connection opens.
+  - Any extra guest is sent `{t:"full"}` and then disconnected.
+- `joinRoom(code, {onOpen, onMessage, onClose, onError})` returns a handle.
+  - The code is trimmed, uppercased and validated. The guest gets a random peer id and connects with `{reliable: true, serialization: "json"}`.
+  - `onOpen()` fires when the connection is open. A `{t:"full"}` reply turns into `onError("Stanza piena.", "full")`, which can arrive just after `onOpen`. The join attempt times out after 15 seconds.
+- Shared callbacks:
+  - `onMessage(msg)` fires for every protocol message.
+  - `onClose()` fires once when the opponent connection drops after it was open.
+  - `onError(text, type)` fires once for a fatal error that happens before an opponent is connected. `text` is an Italian message (for example "Stanza non trovata. Controlla il codice."). `type` is the PeerJS error type, or one of `"full"`, `"invalid-code"` or `"timeout"`.
+  - After either `onClose` or `onError`, the session is torn down.
+  - Signaling-server errors are ignored once the P2P link is up. A lost signaling connection triggers `peer.reconnect()`.
+- Handle methods:
+  - `send(msg)` returns `true`, or `false` when not connected.
+  - `close()` (alias `destroy()`) tears the session down without firing any callback. It also runs automatically on `beforeunload`.
+- `buildInviteLink(code)`, `readRoomFromUrl()` (returns a valid code from `?r=`, or null), `normalizeCode(code)`, `isRoomCode(code)`, `ID_PREFIX`.
